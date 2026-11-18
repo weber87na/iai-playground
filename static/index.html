@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fafafa">
+  <title>iAI Playground</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-orbit" viewBox="0 0 24 24"><path d="M20.2 8.3c1.6-.1 2.7.2 3 1 .6 1.6-3.9 4.7-10 6.9C7 18.4 1.5 18.9.9 17.3c-.3-.8.6-1.9 2.3-3.1"/><circle cx="12" cy="12" r="7.2"/><path d="M12 9.2v5.6m-2.8-2.8h5.6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.5a8 8 0 0 1-8 8H4l1.7-3.6a8 8 0 1 1 14.8-4.4Z"/><path d="M9 11.5h7"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="m4 16 5-5 4 4 2.5-2.5 5 5"/><circle cx="15.5" cy="8.5" r="1"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6M16 5l3 3m1.3-1.3a2.1 2.1 0 0 0-3-3L9 12l-.6 3.6L12 15z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21m-3 0h6"/></symbol>
+    <symbol id="i-audio" viewBox="0 0 24 24"><path d="M3.5 10v4M8 7v10m4-13v16m4-13v10m4.5-7v4"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M4 6h16M4 12h12M4 18h8"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8.5" cy="9" r="4.5"/><path d="m11.7 12.2 7 7 2.3-2.3m-5.1-.5 2.1-2.1"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 5v14"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h8m4 0h4M4 17h4m4 0h8"/><circle cx="14" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3.5h7l5 5V18a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 18V6a2.5 2.5 0 0 1 2-2.5ZM14 4v5h5M8.5 13h7m-7 4h7"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 17c0-3.2-3-3.5-3-7a6 6 0 1 1 12 0c0 3.5-3 3.8-3 7Zm0 3h6m-3-3v-5m-2-2 2 2 2-2"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M10.5 3.5c.8 4.2 2.5 5.9 6.7 6.7-4.2.8-5.9 2.5-6.7 6.7-.8-4.2-2.5-5.9-6.7-6.7 4.2-.8 5.9-2.5 6.7-6.7Zm7.3 11.3v5.4m-2.7-2.7h5.4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="6" y="10" width="12" height="10" rx="2"/><path d="M8.5 10V7a3.5 3.5 0 1 1 7 0v3m-3.5 4v2.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15m-10.5 0V4h6v3m2.5 0-.8 11a2 2 0 0 1-2 2H9.3a2 2 0 0 1-2-2l-.8-11m4 4v5m3-5v5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="m8 13 7-7a3 3 0 0 1 4 4l-8 8a4.5 4.5 0 0 1-6.4-6.4l8-8"/></symbol>
+  </svg>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="工作區導覽">
+      <div class="brand">
+        <span class="brand-mark"><svg class="icon"><use href="#i-orbit"></use></svg></span>
+        <div><strong>iAI Playground</strong><span>NKUST AIHub</span></div>
+      </div>
+      <button class="new-button" id="new-chat"><svg class="icon"><use href="#i-plus"></use></svg>新對話</button>
+
+      <nav class="modes" aria-label="模型功能">
+        <h2>工作區</h2>
+        <div id="mode-list"></div>
+      </nav>
+      <section class="history" aria-label="對話紀錄">
+        <h2>對話紀錄</h2>
+        <div id="history-list"></div>
+      </section>
+
+      <div class="sidebar-bottom">
+        <section class="usage-panel" id="usage-panel" aria-labelledby="usage-title" hidden>
+          <div class="usage-heading">
+            <h2 id="usage-title">金鑰額度</h2>
+            <button class="quiet-button" id="refresh-usage" type="button">更新</button>
+          </div>
+          <p id="usage-status" role="status"></p>
+          <a href="https://www.iai.nkust.edu.tw/portal/app/usage" target="_blank" rel="noreferrer">官方帳戶用量</a>
+        </section>
+        <a class="catalog-link" href="https://www.iai.nkust.edu.tw/models" target="_blank" rel="noreferrer">
+          <svg class="icon"><use href="#i-file"></use></svg>官方模型目錄
+        </a>
+        <button class="key-card" id="open-key">
+          <span class="key-icon"><svg class="icon"><use href="#i-key"></use></svg></span>
+          <span><strong>API Key</strong><small id="key-status">尚未連線</small></span>
+        </button>
+      </div>
+    </aside>
+    <button class="scrim" id="scrim" aria-label="關閉側欄" hidden></button>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-button panel-toggle" id="toggle-panel" aria-label="切換側欄"
+                  aria-controls="sidebar" aria-expanded="true" title="切換側欄">
+            <svg class="icon"><use href="#i-panel"></use></svg>
+          </button>
+          <span class="topbar-rule"></span>
+          <button class="model-button" id="open-model">
+            <svg class="icon model-icon"><use href="#i-grid"></use></svg>
+            <span id="model-button-label">連接 API Key</span>
+            <span class="vision-badge" id="model-vision" hidden>視覺</span>
+            <span class="model-action" id="model-action" hidden>切換</span>
+          </button>
+        </div>
+        <div class="topbar-right">
+          <button class="icon-button mobile-key" id="mobile-key" aria-label="API Key">
+            <svg class="icon"><use href="#i-key"></use></svg>
+          </button>
+          <button class="settings-button" id="open-settings">
+            <svg class="icon"><use href="#i-sliders"></use></svg><span>參數</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="surface is-empty" id="surface">
+        <div class="feed" id="feed" aria-label="模型回應">
+          <section class="welcome" id="welcome">
+            <div class="hero-mark"><svg class="icon"><use id="hero-icon" href="#i-orbit"></use></svg></div>
+            <h1 id="welcome-title">今天想試什麼？</h1>
+            <p id="welcome-description">連接你的 iAI API Key，開始對話。</p>
+          </section>
+          <div class="messages" id="messages" role="log" aria-live="off" hidden></div>
+        </div>
+
+        <div class="composer-area">
+          <form class="composer" id="composer">
+            <div id="attachment" class="attachment" hidden></div>
+            <div id="file-required" class="file-required" hidden></div>
+            <textarea id="prompt" aria-label="提示詞" placeholder="輸入訊息，探索模型的能力…" rows="2" maxlength="100000"></textarea>
+            <div class="composer-actions">
+              <div class="composer-left">
+                <span class="mode-pill" id="mode-pill"></span>
+                <button type="button" class="icon-button attach-button" id="pick-file" title="選擇檔案" aria-label="選擇檔案" hidden>
+                  <svg class="icon"><use href="#i-upload"></use></svg>
+                </button>
+                <input type="file" id="file-input" hidden>
+              </div>
+              <button class="submit-button" type="submit" id="submit">送出</button>
+            </div>
+          </form>
+          <p id="composer-status" class="composer-status" role="status" hidden></p>
+          <div id="suggestions" class="suggestions"></div>
+        </div>
+      </div>
+      <footer class="footer">
+        <svg class="icon"><use href="#i-lock"></use></svg>
+        API Key 只保留在目前頁面，重新整理後需重新貼上。
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="key-dialog" aria-labelledby="key-title">
+    <div class="dialog-heading">
+      <div><h2 id="key-title">連接 iAI API Key</h2><p>使用你自己的金鑰，載入帳號可用的模型。</p></div>
+      <button class="icon-button" data-close aria-label="關閉"><svg class="icon"><use href="#i-close"></use></svg></button>
+    </div>
+    <form id="key-form">
+      <label class="control">iAI API Key
+        <input id="key-input" type="password" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="貼上你的 API Key" autofocus required>
+      </label>
+      <p id="key-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <a href="https://www.iai.nkust.edu.tw/" target="_blank" rel="noreferrer">取得 API Key</a>
+        <button class="quiet-button" type="button" id="disconnect" hidden>中斷連線</button>
+        <button class="primary-button" id="connect" type="submit">連線並載入模型</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="model-dialog" aria-labelledby="model-title">
+    <div class="dialog-heading">
+      <div><h2 id="model-title">選擇模型</h2><p id="model-count"></p></div>
+      <button class="icon-button" data-close aria-label="關閉"><svg class="icon"><use href="#i-close"></use></svg></button>
+    </div>
+    <label class="control"><span class="sr-only">搜尋模型</span>
+      <input id="model-search" type="search" placeholder="搜尋模型 ID" autocomplete="off">
+    </label>
+    <div class="model-list" id="models"></div>
+    <p id="model-error" class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <a href="https://www.iai.nkust.edu.tw/models" target="_blank" rel="noreferrer">查詢模型能力</a>
+      <button id="refresh-models" class="quiet-button">重新整理</button>
+    </div>
+  </dialog>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="dialog-heading">
+      <div><h2 id="settings-title">模型參數</h2><p id="settings-description"></p></div>
+      <button class="icon-button" data-close aria-label="關閉"><svg class="icon"><use href="#i-close"></use></svg></button>
+    </div>
+    <form id="settings-form">
+      <div id="settings-fields"></div>
+      <div class="dialog-actions">
+        <button class="quiet-button" id="reset-settings" type="button">恢復預設</button>
+        <button class="primary-button" type="submit">套用</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
