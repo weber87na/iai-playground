@@ -10,14 +10,18 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
+
+from attachments import MAX_ATTACHMENTS, AttachmentError, attachment_parts, text_part
 
 
 IAIHUB_URL = "https://www.iai.nkust.edu.tw/aihub"
 BASE_URL = f"{IAIHUB_URL}/v1/"
 STATIC = Path(__file__).parent / "static"
 MAX_FILE = 20 * 1024 * 1024
+VISION_MODEL = "Furen-omni"
 ROUTES = {
     "image": "images/generations",
     "edit": "images/edits",
@@ -47,7 +51,10 @@ async def response_headers(request: Request, call_next):
     if request.url.path.startswith("/api/"):
         origin = request.headers.get("origin")
         if origin and origin != f"{request.url.scheme}://{request.url.netloc}":
-            return JSONResponse({"detail": "請從 Playground 頁面發送請求。"}, 403)
+            # A hosting proxy can terminate TLS before forwarding to Uvicorn.
+            secure_origin = f"https://{request.url.netloc}"
+            if origin != secure_origin or request.headers.get("sec-fetch-site") != "same-origin":
+                return JSONResponse({"detail": "請從 Playground 頁面發送請求。"}, 403)
         length = request.headers.get("content-length")
         if length and length.isdecimal() and int(length) > MAX_FILE + 1024 * 1024:
             return JSONResponse({"detail": "請縮小檔案後再試，單檔上限 20 MB。"}, 413)
@@ -190,6 +197,10 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = Field(default=None, gt=0)
 
 
+class AttachedChatRequest(ChatRequest):
+    attachment_index: int = Field(ge=0)
+
+
 def text_content(value):
     if isinstance(value, str):
         return value
@@ -247,9 +258,41 @@ async def chat_events(response):
 
 @app.post("/api/chat")
 async def chat(request: Request, payload: ChatRequest):
-    response = await send(request, "POST", "chat/completions", stream=payload.stream,
-                          json=payload.model_dump(exclude_none=True))
-    if payload.stream and "text/event-stream" in response.headers.get("content-type", "").lower():
+    return await complete_chat(request, payload.model_dump(exclude_none=True))
+
+
+@app.post("/api/chat/attachments")
+async def chat_with_attachments(request: Request):
+    auth(request)
+    async with request.form(max_files=MAX_ATTACHMENTS, max_fields=1, max_part_size=2 * 1024 * 1024) as form:
+        try:
+            payload = AttachedChatRequest.model_validate_json(form.get("payload"))
+        except ValidationError as exc:
+            raise HTTPException(422, "請檢查附件對話的訊息格式。") from exc
+        index = payload.attachment_index
+        if index >= len(payload.messages) or payload.messages[index].role != "user":
+            raise HTTPException(422, "附件必須加在使用者訊息中。")
+        if payload.model != VISION_MODEL:
+            raise HTTPException(422, "附件對話請使用 Furen-omni。")
+        files = form.getlist("file")
+        if not files or any(not isinstance(file, UploadFile) or not file.size for file in files):
+            raise HTTPException(422, "請上傳非空白的附件。")
+        if sum(file.size for file in files) > MAX_FILE:
+            raise HTTPException(413, "附件合計上限為 20 MB。")
+        data = [(file.filename or "附件", file.content_type or "", await file.read()) for file in files]
+    try:
+        parts = await run_in_threadpool(attachment_parts, data)
+    except AttachmentError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    body = payload.model_dump(exclude_none=True, exclude={"attachment_index"})
+    body["messages"][index]["content"] = [text_part(payload.messages[index].content), *parts]
+    return await complete_chat(request, body)
+
+
+async def complete_chat(request, body):
+    streaming = body["stream"]
+    response = await send(request, "POST", "chat/completions", stream=streaming, json=body)
+    if streaming and "text/event-stream" in response.headers.get("content-type", "").lower():
         return StreamingResponse(chat_events(response), media_type="application/x-ndjson",
                                  headers={"X-Accel-Buffering": "no"})
     try:
@@ -289,6 +332,8 @@ async def run_task(
     elif operation == "speak":
         data["input"] = payload.text
         data.update(payload.model_dump(include={"voice", "response_format"}, exclude_none=True))
+        if payload.model == "Speaker" and not data.get("voice", "").strip():
+            data["voice"] = "taiwan_girl"
     elif operation == "embed":
         data.update(input=payload.text, encoding_format="float")
     else:

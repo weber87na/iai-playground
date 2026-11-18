@@ -36,7 +36,7 @@
     <aside class="sidebar" id="sidebar" aria-label="工作區導覽">
       <div class="brand">
         <span class="brand-mark"><svg class="icon"><use href="#i-orbit"></use></svg></span>
-        <div><strong>iAI Playground</strong><span>NKUST AIHub</span></div>
+        <div><strong>iAI Playground <small class="app-version" aria-label="版本 0.1">0.1</small></strong><span>NKUST AIHub</span></div>
       </div>
       <button class="new-button" id="new-chat"><svg class="icon"><use href="#i-plus"></use></svg>新對話</button>
 
@@ -112,13 +112,15 @@
             <div class="composer-actions">
               <div class="composer-left">
                 <span class="mode-pill" id="mode-pill"></span>
-                <button type="button" class="icon-button attach-button" id="pick-file" title="選擇檔案" aria-label="選擇檔案" hidden>
+                  <button type="button" class="icon-button attach-button" id="pick-file" title="加入附件，也可直接貼上" aria-label="加入附件" hidden>
                   <svg class="icon"><use href="#i-upload"></use></svg>
                 </button>
                 <input type="file" id="file-input" hidden>
+                  <button type="button" class="quiet-button" id="attachment-action" hidden>依附件生圖</button>
               </div>
               <button class="submit-button" type="submit" id="submit">送出</button>
             </div>
+              <p id="attachment-hint" class="attachment-hint" hidden></p>
           </form>
           <p id="composer-status" class="composer-status" role="status" hidden></p>
           <div id="suggestions" class="suggestions"></div>

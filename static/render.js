@@ -140,7 +140,17 @@ function download(url, label, filename) {
 export function renderMessage(message) {
   const article = node("article", "message " + message.role);
   if (message.role === "user") {
-    article.append(node("div", "message-content plain", message.text));
+    const filenames = Array.isArray(message.attachments) ? message.attachments.filter((name) => typeof name === "string") : [];
+    if (filenames.length) {
+      const attachments = node("div", "message-attachments");
+      for (const filename of filenames) {
+        const label = node("span");
+        label.append(icon("file"), filename);
+        attachments.append(label);
+      }
+      article.append(attachments);
+    }
+    if (message.text) article.append(node("div", "message-content plain", message.text));
     return { article };
   }
 
@@ -154,7 +164,7 @@ export function renderMessage(message) {
     content.replaceChildren();
     actions.replaceChildren();
     if (message.pending && !message.text) {
-      content.append(node("div", "pending", "等待模型回應"));
+      content.append(node("div", "pending", message.waiting ?? "等待模型回應"));
       return;
     }
     if (message.image) {

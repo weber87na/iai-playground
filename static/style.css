@@ -30,7 +30,8 @@ a { color: var(--accent); }
 .brand { display: flex; flex: none; align-items: center; gap: 11px; padding: 0 6px; }
 .brand-mark { display: grid; place-items: center; width: 39px; height: 39px; color: #f7f7f7; background: var(--accent); border-radius: 11px; box-shadow: inset 0 0 0 1px #202020; }
 .brand-mark .icon { width: 22px; height: 22px; }
-.brand strong { display: block; font-size: 17px; letter-spacing: -.035em; line-height: 1.16; }
+.brand strong { display: flex; align-items: center; gap: 6px; font-size: 17px; letter-spacing: -.035em; line-height: 1.16; }
+.app-version { flex: none; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 10px; letter-spacing: 0; }
 .brand div span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; letter-spacing: .085em; }
 .new-button { display: flex; flex: none; align-items: center; gap: 10px; width: 100%; min-height: 43px; margin-top: 28px; border: 1px solid #dedede; background: #fcfcfc; border-radius: 9px; padding: 8px 11px; text-align: left; color: var(--accent); font-size: 14px; font-weight: 700; }
 .new-button:hover, .key-card:hover { border-color: #a7a7a7; background: #fff; }
@@ -120,10 +121,14 @@ a { color: var(--accent); }
 .footer .icon { width: 14px; height: 14px; }
 .file-required button { display: flex; align-items: center; gap: 9px; min-height: 50px; padding: 8px 12px; border: 1px dashed #bcbcbc; background: #f7f7f7; border-radius: 9px; margin-bottom: 8px; width: 100%; }
 .file-required button:hover { background: #efefef; }
-.attachment { display: flex; align-items: center; width: fit-content; max-width: 100%; background: #f2f2f2; border: 1px solid var(--line); border-radius: 8px; padding: 1px 3px 1px 9px; gap: 6px; font-size: 12px; margin-bottom: 6px; }
-.attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attachment .icon { width: 15px; height: 15px; }
-.attachment .icon-button { width: 27px; height: 27px; }
+.attachment, .message-attachments { display: flex; flex-wrap: wrap; gap: 6px; }
+.attachment { margin-bottom: 6px; }
+.attachment-chip { display: flex; align-items: center; max-width: 100%; gap: 6px; padding: 1px 3px 1px 9px; border: 1px solid var(--line); border-radius: 8px; background: #f2f2f2; font-size: 12px; }
+.attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip .icon, .message-attachments .icon { width: 15px; height: 15px; }
+.attachment-chip .icon-button { width: 27px; height: 27px; }
+.attachment-hint { margin: 6px 4px 1px; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.message-attachments span { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 3px 7px; border-radius: 6px; background: #3b3b3b; font-size: 12px; overflow-wrap: anywhere; }
 
 .messages { padding-block: 28px 12px; display: flex; flex-direction: column; gap: 25px; }
 .message { min-width: 0; display: grid; gap: 8px; }
