@@ -104,7 +104,10 @@ a { color: var(--accent); }
 #prompt { display: block; width: 100%; padding: 4px 4px 6px; min-height: 49px; max-height: 164px; resize: none; field-sizing: content; outline: none; border: 0; background: none; font-size: 15px; line-height: 1.6; }
 #prompt::placeholder { color: #707070; }
 .composer-actions, .composer-left { display: flex; align-items: center; gap: 7px; }
+.composer-left { flex-wrap: wrap; min-width: 0; }
 .composer-actions { justify-content: space-between; }
+.enhance-button { white-space: nowrap; }
+.enhance-button .icon, .code-controls .icon { width: 15px; height: 15px; }
 .mode-pill { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 7px; background: #f1f1f1; color: #424242; font-weight: 700; font-size: 11.5px; }
 .mode-pill .icon { width: 15px; height: 15px; }
 .submit-button { flex: none; min-height: 37px; padding: 0 13px; border: 0; border-radius: 11px; background: var(--accent); color: white; font-size: 13px; font-weight: 700; }
@@ -173,6 +176,13 @@ dialog::backdrop { background: #00000050; }
 input[type="checkbox"] { accent-color: var(--accent); }
 .form-error { font-size: 12px; margin: 8px 0; }
 .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; margin-top: 17px; flex-wrap: wrap; }
+.code-dialog { width: min(100% - 32px, 720px); }
+.code-controls, .code-languages, #copy-code { display: flex; align-items: center; gap: 7px; }
+.code-controls { justify-content: space-between; }
+.code-languages .quiet-button[aria-pressed="true"] { background: #e9e9e9; }
+.request-code { max-height: 45dvh; overflow: auto; margin: 10px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #f2f2f2; font: 12px/1.55 ui-monospace, Consolas, monospace; }
+.code-hint { margin: 6px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.code-hint:empty { display: none; }
 .dialog-actions a { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; margin-right: auto; text-decoration: none; padding-block: 5px; }
 .dialog-actions a:hover { text-decoration: underline; }
 .dialog-actions .icon { width: 15px; height: 15px; }
@@ -204,6 +214,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
   .scrim:not([hidden]) { position: fixed; display: block !important; z-index: 2; inset: 0; border: 0; background: #00000051; }
   .mobile-key { display: inline-flex !important; }
   .topbar { height: 58px; padding-inline: 12px; }
+  .code-button span { display: none; }
   .topbar-left, .topbar-right { gap: 5px; }
   .composer-area, .messages { width: calc(100% - 28px); }
   .suggestions { gap: 6px; }

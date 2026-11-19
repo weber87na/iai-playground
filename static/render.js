@@ -171,12 +171,16 @@ export function renderMessage(message) {
       const image = node("img");
       image.src = message.image.src;
       image.alt = "iAI 模型輸出的圖片";
+      const dimensions = node("span");
+      image.addEventListener("load", () => {
+        dimensions.textContent = image.naturalWidth + " × " + image.naturalHeight;
+      });
       image.addEventListener("error", () => {
         image.replaceWith(node("p", "", "圖片無法載入。可嘗試從原始網址開啟。"));
       });
       content.append(image);
       const filename = message.image.extension ? "iai-image." + message.image.extension : "";
-      actions.append(download(message.image.src, filename ? "下載圖片" : "開啟圖片", filename));
+      actions.append(download(message.image.src, filename ? "下載圖片" : "開啟圖片", filename), dimensions);
     } else if (message.audio) {
       const audio = node("audio");
       audio.src = message.audio;

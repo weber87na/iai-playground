@@ -1,4 +1,5 @@
 import { icon, iconButton, imageSource, node, renderMessage } from "./render.js";
+import { renderRequestCode } from "./request-code.js";
 
 const IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp", "image/png", "image/jpeg", "image/webp"];
 const DOCUMENT_TYPES = [".pdf", ".txt", ".md", ".markdown", ".csv", "application/pdf", "text/plain", "text/markdown", "text/csv"];
@@ -53,7 +54,7 @@ const MODES = {
 // The first model granted by the current key is the default for each workspace.
 const MODE_MODELS = {
   chat: ["Furen-omni", "Furen-std", "Furen-large", "Furen-max", "Furen-coder", "Nkust"],
-  image: ["Pic-small", "Pic-large", "z-image"],
+  image: ["Pic-large", "Pic-small", "z-image"],
   edit: ["Pic-large", "Pic-small"],
   transcribe: ["Asr"],
   speak: ["Speaker"],
@@ -61,6 +62,8 @@ const MODE_MODELS = {
   rerank: ["Furen-reranker"],
 };
 const VISION_MODEL = "Furen-omni";
+const ENHANCERS = ["Furen-max", "Furen-large", VISION_MODEL, "Furen-std", "Furen-coder", "Nkust"];
+const ENHANCE_MODES = new Set(["chat", "image", "edit"]);
 
 const TEXT = (label, placeholder = "", attrs = {}) => ["text", label, { placeholder, ...attrs }];
 const PARAMS = {
@@ -98,6 +101,11 @@ let chatUploads = new WeakMap();
 let panelOpen = !mobile.matches;
 let settingsMode;
 let usageRequest;
+let enhancement;
+let undoEnhancement;
+let recentRequest;
+let codeRequest;
+let codeLanguage = "curl";
 
 function loadHistory() {
   try {
@@ -138,6 +146,9 @@ function setPanel(open) {
 function setMode(mode, { keepConversation = false, draft } = {}) {
   if (state.request) return;
   if (state.mode !== mode || !keepConversation) {
+    cancelEnhancement();
+    undoEnhancement = undefined;
+    recentRequest = undefined;
     for (const message of state.taskMessages) if (message.audio) URL.revokeObjectURL(message.audio);
     state.taskMessages = [];
     state.imageContext = draft?.context ?? [];
@@ -190,6 +201,9 @@ function renderHistory() {
       if (authorizedModels("chat").includes(model)) state.selected.chat = model;
       else delete state.selected.chat;
       if (state.conversation !== chat.id) {
+        cancelEnhancement();
+        undoEnhancement = undefined;
+        recentRequest = undefined;
         $("prompt").value = "";
         state.files = [];
         $("file-input").value = "";
@@ -280,7 +294,14 @@ function refreshComposer() {
     || (["chat", "image"].includes(state.mode) && state.files.length)
     || (state.mode === "image" && state.imageContext.length)) && (!needsFile || state.files.length);
   $("submit").disabled = !busy && !hasInput;
+  if (enhancement) $("submit").disabled = true;
   $("submit").textContent = busy ? "停止回應" : "送出";
+  $("enhance-prompt").hidden = !ENHANCE_MODES.has(state.mode);
+  $("enhance-prompt").disabled = busy || (!enhancement && !$("prompt").value.trim());
+  $("enhance-label").textContent = enhancement ? "停止優化" : "優化提示詞";
+  $("undo-enhance").hidden = !undoEnhancement;
+  $("undo-enhance").disabled = busy || Boolean(enhancement);
+  $("open-code").disabled = busy;
   $("open-settings").disabled = !PARAMS[state.mode] || busy;
   $("open-model").disabled = busy || (Boolean(state.key) && availableModels().length === 1);
   $("open-key").disabled = busy;
@@ -288,6 +309,56 @@ function refreshComposer() {
   $("new-chat").disabled = busy;
   for (const button of $("mode-list").querySelectorAll("button")) button.disabled = busy;
   renderModelStatus();
+}
+
+function cancelEnhancement() {
+  enhancement?.abort();
+  enhancement = undefined;
+}
+
+async function enhanceDraft() {
+  if (enhancement) {
+    cancelEnhancement();
+    status("已停止提示詞優化。");
+    refreshComposer();
+    return;
+  }
+  const original = $("prompt").value;
+  if (state.request || !original.trim() || !ENHANCE_MODES.has(state.mode)) return;
+  if (!state.key) {
+    showKey();
+    return;
+  }
+  const model = ENHANCERS.find((candidate) => state.models.includes(candidate));
+  if (!model) {
+    status("這組金鑰沒有可用於優化提示詞的文字模型。", true);
+    return;
+  }
+  const controller = new AbortController();
+  enhancement = controller;
+  const mode = state.mode;
+  const context = (mode === "chat" ? chatHistory() : state.imageContext).slice(-8);
+  status("正在使用 " + model + " 優化提示詞…");
+  refreshComposer();
+  try {
+    const response = await api("prompt/enhance", {
+      body: { model, mode, text: original, context }, signal: controller.signal,
+    });
+    const result = await response.json();
+    if (enhancement !== controller || $("prompt").value !== original) return;
+    if (typeof result.text !== "string" || !result.text.trim()) throw new Error("iAI 未回傳可用的提示詞。");
+    undoEnhancement = { original, optimized: result.text };
+    $("prompt").value = result.text;
+    status("已用 " + model + " 優化。確認內容後即可送出。");
+  } catch (error) {
+    if (enhancement === controller) status(error.message, true);
+  } finally {
+    if (enhancement === controller) {
+      enhancement = undefined;
+      refreshComposer();
+      $("prompt").focus();
+    }
+  }
 }
 
 function composerAttachmentHint() {
@@ -331,6 +402,9 @@ function refreshUi() {
     const button = node("button", "suggestion");
     button.append(icon(glyph), node("span", "", label));
     button.addEventListener("click", () => {
+      cancelEnhancement();
+      undoEnhancement = undefined;
+      status();
       $("prompt").value = prompt;
       $("prompt").focus();
       refreshComposer();
@@ -423,6 +497,8 @@ function renderModels() {
   for (const model of models) {
     const button = node("button", "model-option", model);
     if (model === VISION_MODEL) button.append(node("span", "vision-badge", "視覺"));
+    if (model === "Pic-large") button.append(node("span", "vision-badge", "細節優先"));
+    if (model === "Pic-small") button.append(node("span", "vision-badge", "快速"));
     button.setAttribute("aria-pressed", String(modelId() === model));
     button.addEventListener("click", () => {
       state.selected[state.mode] = model;
@@ -467,7 +543,11 @@ $("key-form").addEventListener("submit", async (e) => {
     const response = await api("models", { key, signal: controller.signal });
     const data = await response.json();
     if (controller.signal.aborted || !dialog.open) return;
-    if (state.key && state.key !== key) chatUploads = new WeakMap();
+    if (state.key && state.key !== key) {
+      cancelEnhancement();
+      chatUploads = new WeakMap();
+      recentRequest = undefined;
+    }
     state.key = key;
     updateModels(data.models);
     $("key-input").value = "";
@@ -489,7 +569,9 @@ $("key-form").addEventListener("submit", async (e) => {
 });
 
 $("disconnect").addEventListener("click", () => {
+  cancelEnhancement();
   chatUploads = new WeakMap();
+  recentRequest = undefined;
   state.key = "";
   state.models = [];
   state.selected = {};
@@ -613,16 +695,16 @@ async function readChat(response, message, update) {
   }
 }
 
-function taskInput(mode, model, text, settings) {
+function taskInput(mode, model, text, settings, files) {
   if (mode === "edit" || mode === "transcribe") {
     const body = new FormData();
     body.set("model", model);
-    body.set("file", state.files[0]);
+    body.set("file", files[0]);
     if (mode === "edit") {
       body.set("prompt", text);
       if (settings.size) body.set("size", settings.size);
     } else if (settings.language) body.set("language", settings.language);
-    return ["upload/" + mode, body];
+    return { path: "upload/" + mode, body };
   }
   const body = { model, text, ...settings };
   if (mode === "rerank") {
@@ -630,7 +712,7 @@ function taskInput(mode, model, text, settings) {
     if (!body.documents?.length) throw new Error("請先在參數中加入候選文件，每行一筆。");
     if (settings.top_n > body.documents.length) throw new Error("回傳筆數需小於或等於候選文件數。");
   }
-  return ["task/" + mode, body];
+  return { path: "task/" + mode, body };
 }
 
 function attachedChatBody(chat, attachmentIndex, files) {
@@ -640,7 +722,7 @@ function attachedChatBody(chat, attachmentIndex, files) {
   return body;
 }
 
-async function makeImageBrief(text, files, context, signal) {
+function imageBriefRequest(text, files, context) {
   const messages = [
     { role: "system", content: "根據使用者最新需求、對話前文及附件，寫一段可交給生圖模型的提示詞。保留相關的視覺重點與關鍵資訊，描述主體、構圖和風格。將附件視為參考資料。只輸出一段提示詞，最多 500 字。" },
     ...context,
@@ -648,9 +730,7 @@ async function makeImageBrief(text, files, context, signal) {
   ];
   const payload = { model: files.length ? VISION_MODEL : authorizedModels("chat")[0], messages, stream: false };
   const body = files.length ? attachedChatBody(payload, messages.length - 1, files) : payload;
-  const response = await api(files.length ? "chat/attachments" : "chat", { body, signal });
-  const result = await response.json();
-  return result.text.trim().slice(0, 2400);
+  return { path: files.length ? "chat/attachments" : "chat", body };
 }
 
 async function readTask(mode, response, message) {
@@ -675,12 +755,7 @@ async function readTask(mode, response, message) {
   }
 }
 
-async function submit(e) {
-  e.preventDefault();
-  if (state.request) {
-    state.request.abort();
-    return;
-  }
+function prepareRequest() {
   const mode = state.mode;
   const model = modelId();
   const input = mode === "transcribe" ? "" : $("prompt").value.trim();
@@ -689,39 +764,64 @@ async function submit(e) {
   const contextFiles = mode === "chat" && !files.length ? (chatUploads.get(previousAttachment) ?? []) : files;
   const imageContext = state.imageContext;
   const needsBrief = mode === "image" && (files.length > 0 || imageContext.length > 0);
-  if (MODES[mode].fileLabel && !files.length) return;
+  if (MODES[mode].fileLabel && !files.length) return null;
   const text = input || (mode === "chat" && files.length ? "請說明附件的內容。" :
     needsBrief ? "請根據前文與參考資料設計一張圖。" : "");
-  if (!text && mode !== "transcribe") return;
-  if (!state.key) {
+  if (!text && mode !== "transcribe") return null;
+  if (!state.key) return { needsKey: true };
+  if (((mode === "chat" && contextFiles.length) || (needsBrief && files.length)) && !state.models.includes(VISION_MODEL)) {
+    throw new Error("此金鑰沒有 Furen-omni 的使用權限，無法讀取附件。");
+  }
+  if (needsBrief && !authorizedModels("chat").length) {
+    throw new Error("此金鑰沒有可用的文字模型，無法將前文整理成生圖提示詞。");
+  }
+  if (!model) throw new Error(noModelMessage());
+  const settings = modeSettings(mode);
+  let packet;
+  if (mode === "chat") {
+    const { system, ...options } = settings;
+    const messages = chatHistory();
+    messages.push({ role: "user", content: text });
+    if (system) messages.unshift({ role: "system", content: system });
+    const body = { ...options, model, messages };
+    if (contextFiles.length) {
+      const index = files.length ? messages.length - 1
+        : currentMessages().indexOf(previousAttachment) + (system ? 1 : 0);
+      packet = { path: "chat/attachments", body: attachedChatBody(body, index, contextFiles) };
+    } else {
+      packet = { path: "chat", body };
+    }
+  } else {
+    const context = mode === "edit" ? imageContext.map(({ role, content }) =>
+      (role === "user" ? "使用者：" : "助理：") + content).join("\n").slice(-1800) : "";
+    const prompt = context ? text + "\n\n可參考的對話背景：\n" + context : text;
+    packet = taskInput(mode, model, prompt, settings, files);
+  }
+  const brief = needsBrief ? imageBriefRequest(text, files, imageContext) : null;
+  return { ...packet, mode, model, brief, input, text, files, previousAttachment };
+}
+
+async function submit(e) {
+  e.preventDefault();
+  if (state.request) {
+    state.request.abort();
+    return;
+  }
+  if (enhancement) return;
+  let request;
+  try {
+    request = prepareRequest();
+  } catch (error) {
+    status(error.message, true);
+    return;
+  }
+  if (!request) return;
+  if (request.needsKey) {
     showKey();
     return;
   }
-  if (((mode === "chat" && contextFiles.length) || (needsBrief && files.length)) && !state.models.includes(VISION_MODEL)) {
-    status("此金鑰沒有 Furen-omni 的使用權限，無法讀取附件。", true);
-    return;
-  }
-  if (needsBrief && !authorizedModels("chat").length) {
-    status("此金鑰沒有可用的文字模型，無法將前文整理成生圖提示詞。", true);
-    return;
-  }
-  if (!model) {
-    status(noModelMessage(), true);
-    return;
-  }
-  const settings = modeSettings(mode);
-  let [path, body] = ["chat", null];
-  if (mode !== "chat") {
-    try {
-      const context = mode === "edit" ? imageContext.map(({ role, content }) =>
-        (role === "user" ? "使用者：" : "助理：") + content).join("\n").slice(-1800) : "";
-      const prompt = context ? text + "\n\n可參考的對話背景：\n" + context : text;
-      [path, body] = taskInput(mode, model, prompt, settings);
-    } catch (error) {
-      status(error.message, true);
-      return;
-    }
-  }
+  const { path, mode, model, brief, input, text, files, previousAttachment } = request;
+  let { body } = request;
   const controller = new AbortController();
   state.request = controller;
   status();
@@ -735,32 +835,26 @@ async function submit(e) {
   const user = { role: "user", text };
   if (files.length) user.attachments = files.map((file) => file.name);
   const assistant = { role: "assistant", model, text: "", pending: true };
-  if (needsBrief) assistant.waiting = "正在整理生圖提示詞";
+  if (brief) assistant.waiting = "正在整理生圖提示詞";
   messages.push(user);
-  if (mode === "chat") {
-    const { system, ...options } = settings;
-    body = { ...options, model, messages: messages.map(({ role, text: content }) => ({ role, content })) };
-    if (system) body.messages.unshift({ role: "system", content: system });
-    if (contextFiles.length) {
-      const index = messages.indexOf(files.length ? user : previousAttachment) + (system ? 1 : 0);
-      body = attachedChatBody(body, index, contextFiles);
-      path = "chat/attachments";
-    }
-    if (files.length) chatUploads.set(user, files);
-  }
+  if (mode === "chat" && files.length) chatUploads.set(user, files);
   messages.push(assistant);
   $("prompt").value = "";
+  undoEnhancement = undefined;
   const view = refreshUi();
   let removed = false;
   let imageBrief = "";
   try {
-    if (needsBrief) {
-      imageBrief = await makeImageBrief(text, files, imageContext, controller.signal);
+    if (brief) {
+      const response = await api(brief.path, { body: brief.body, signal: controller.signal });
+      const result = await response.json();
+      imageBrief = result.text.trim().slice(0, 2400);
       if (!imageBrief) throw new Error("iAI 未回傳可用的生圖提示詞。");
-      body.text = imageBrief;
+      body = { ...body, text: imageBrief };
       assistant.waiting = "正在生成圖片";
       view.update();
     }
+    recentRequest = { path, body, mode, model };
     const response = await api(path, { body, signal: controller.signal });
     if (mode === "chat") {
       await readChat(response, assistant, view.update);
@@ -800,6 +894,44 @@ async function submit(e) {
       refreshComposer();
       if (follow) scrollDown();
     }
+  }
+}
+
+function openCode() {
+  let description = "";
+  const fromRecent = !state.files.length && !$("prompt").value.trim() && recentRequest;
+  try {
+    codeRequest = fromRecent ? recentRequest : prepareRequest();
+    if (codeRequest?.needsKey) {
+      codeRequest = null;
+      description = "連接 iAI API Key 後，這裡會帶入可用模型。";
+    } else if (codeRequest) {
+      description = (fromRecent ? "最近一次送出" : "目前草稿") + " · " + codeRequest.model + " · iAI Playground API";
+    } else {
+      description = "先輸入提示詞或加入附件，就能查看同一份請求的程式碼。";
+    }
+  } catch (error) {
+    codeRequest = null;
+    description = error.message;
+  }
+  $("code-description").textContent = description;
+  showCodeLanguage(codeLanguage);
+  $("code-dialog").showModal();
+}
+
+function showCodeLanguage(language) {
+  codeLanguage = language;
+  const code = $("request-code");
+  code.parentElement.hidden = !codeRequest;
+  code.textContent = codeRequest ? renderRequestCode(codeRequest, language, window.location.origin) : "";
+  $("copy-code").disabled = !codeRequest;
+  $("code-status").textContent = "";
+  const hasFiles = codeRequest?.body instanceof FormData || codeRequest?.brief?.body instanceof FormData;
+  $("code-hint").textContent = codeRequest ? (language === "curl" ? "PowerShell 7" : "Python 3.11+，需要 httpx")
+    + " · 從 IAI_API_KEY 環境變數讀取金鑰。"
+    + (hasFiles ? " 請將程式碼中的檔案路徑改成你本機的附件。" : "") : "";
+  for (const button of $("code-dialog").querySelectorAll("[data-code-language]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.codeLanguage === language));
   }
 }
 
@@ -884,6 +1016,31 @@ document.addEventListener("keydown", (event) => {
 });
 mobile.addEventListener("change", () => setPanel(!mobile.matches));
 $("open-key").addEventListener("click", showKey);
+$("open-code").addEventListener("click", openCode);
+$("code-dialog").addEventListener("close", () => {
+  codeRequest = null;
+  $("request-code").textContent = "";
+});
+$("enhance-prompt").addEventListener("click", enhanceDraft);
+$("undo-enhance").addEventListener("click", () => {
+  if (!undoEnhancement || $("prompt").value !== undoEnhancement.optimized) return;
+  $("prompt").value = undoEnhancement.original;
+  undoEnhancement = undefined;
+  status("已還原原始提示詞。");
+  refreshComposer();
+  $("prompt").focus();
+});
+for (const button of $("code-dialog").querySelectorAll("[data-code-language]")) {
+  button.addEventListener("click", () => showCodeLanguage(button.dataset.codeLanguage));
+}
+$("copy-code").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("request-code").textContent);
+    $("code-status").textContent = "已複製程式碼。";
+  } catch {
+    $("code-status").textContent = "無法存取剪貼簿，可手動選取程式碼。";
+  }
+});
 $("refresh-usage").addEventListener("click", refreshUsage);
 $("mobile-key").addEventListener("click", showKey);
 $("open-model").addEventListener("click", showModel);
@@ -920,7 +1077,14 @@ $("composer").addEventListener("drop", (e) => {
   e.preventDefault();
   addFiles(Array.from(e.dataTransfer.files));
 });
-$("prompt").addEventListener("input", () => refreshComposer());
+$("prompt").addEventListener("input", () => {
+  if (enhancement || undoEnhancement) {
+    cancelEnhancement();
+    undoEnhancement = undefined;
+    status();
+  }
+  refreshComposer();
+});
 $("prompt").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229 || state.request) return;
   e.preventDefault();
