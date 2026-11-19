@@ -46,7 +46,8 @@ uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-
 ## LangChain Agent 與連網搜尋
 
 - 對話、附件問答、提示詞優化與生圖提示詞整理都由 LangChain Agent 使用指定的 iAI 文字模型。文字對話預設開啟連網搜尋，詢問「今天的台灣科技新聞」或請它上網查證時，Agent 會先查詢再根據結果回答。串流模式會顯示搜尋進度，回覆下方可開啟來源。
-- 可在「參數」關閉「連網搜尋」，Agent 仍會使用同一個模型回答。如果選用的模型不支援工具呼叫，可以切換到 `Furen-omni` 或關閉連網搜尋後重試。每輪搜尋最多三次，Agent 的多次模型呼叫會使用這組 iAI 金鑰的額度。
+- 新聞與查證問題會用不同關鍵字搜尋，優先核對官方公告和第一手資料。每輪最多六次搜尋，缺少能支持答案的資料時會提示查證限制。查詢 2026 年六都市長名單時，Agent 會讀取中選會登記彙總表與各市公報，逐城核對後附上來源。
+- 可在「參數」關閉「連網搜尋」，Agent 仍會使用同一個模型回答。如果選用的模型不支援工具呼叫，可以切換到 `Furen-omni` 或關閉連網搜尋後重試。Agent 的多次模型呼叫會使用這組 iAI 金鑰的額度。
 - 文字生圖、圖片編輯、語音轉文字、文字轉語音、文字向量化與文件重排序由 Agent 執行所選工作區的對應 iAI 工具。工作區已指定工具，因此每個專用工具只執行一次，也不會為選擇工具額外呼叫文字模型。
 - 預設用 [DDGS](https://github.com/deedy5/ddgs) 搜尋，使用者貼上 iAI API Key 即可使用。若有 [Brave Search API](https://api-dashboard.search.brave.com/app/keys) 金鑰，可在本機環境變數或 Azure App Service 應用程式設定加入 `BRAVE_SEARCH_API_KEY`，改用 Brave Search。搜尋服務只接收 agent 產生的關鍵字，iAI API Key 送往高科大 API。
 
@@ -54,6 +55,7 @@ uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-
 
 - 文字對話、文字生圖與圖片編輯有「優化提示詞」按鈕。它會優先使用金鑰有權限的 Furen-max，其次依序使用 Furen-large、Furen-omni 或其他可用文字模型。優化會改寫草稿，使用者確認後再送出，也可按「還原」。按下優化會使用一次文字模型請求。
 - 生圖在金鑰有權限時預設使用 Pic-large，可切換至 Pic-small。預設請求尺寸為 1024×1024，結果旁會顯示實際像素。可接受的尺寸與其他參數依 iAI 模型而異。
+- 文字生圖輸入框下方有 50 組應用案例，分成產品電商、餐飲、活動、建築、旅行、插畫、教材、簡報、遊戲與攝影等 10 類。縮圖來自各組提示詞以 Pic-large、1024×1024 生成的實測樣本。點選案例會將提示詞帶入草稿，使用者可修改或還原後再送出。
 - 頂部的「程式碼」可複製 PowerShell 7 的 cURL 指令或 Python 3.11+ 的 httpx 範例。範例呼叫目前站點的 Playground API，帶入草稿或最近一次送出的請求。附件請改用本機檔案路徑，金鑰由 `IAI_API_KEY` 環境變數讀取。文件生圖在送出前會列出兩個步驟，送出後則帶入當次實際使用的生圖提示詞。
 - 對話中的程式碼區塊與 cURL／Python 面板由本機提供的 [Highlight.js 11.12.0](https://github.com/highlightjs/cdn-release/tree/11.12.0) 上色。側欄在 NKUST AIHub 下方顯示 Git commit 的前 8 碼。Azure 部署時由 GitHub Actions 將建置 commit 寫入 `build-revision.txt`。
 

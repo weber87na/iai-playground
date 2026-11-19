@@ -1,5 +1,6 @@
 import { icon, iconButton, imageSource, node, renderMessage, setHighlightedCode } from "./render.js";
 import { renderRequestCode } from "./request-code.js";
+import { createImageGallery } from "./image-cases.js";
 
 const IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp", "image/png", "image/jpeg", "image/webp"];
 const DOCUMENT_TYPES = [".pdf", ".txt", ".md", ".markdown", ".csv", "application/pdf", "text/plain", "text/markdown", "text/csv"];
@@ -22,7 +23,6 @@ const MODES = {
     name: "文字生圖", icon: "image", title: "用文字生成圖片",
     description: "描述想生成的圖片，也可以貼上參考圖或文件。", placeholder: "描述你想生成的圖片…",
     accept: ATTACHMENT_TYPES,
-    suggestions: [["image", "夕陽海景", "夕陽中的台灣東海岸，遠山與浪花，寫實底片攝影。"]],
   },
   edit: {
     name: "圖片編輯", icon: "edit", title: "用參考圖開始編輯",
@@ -108,6 +108,20 @@ let undoEnhancement;
 let recentRequest;
 let codeRequest;
 let codeLanguage = "curl";
+const updateImageGallery = createImageGallery((example, catalog) => {
+  if (state.mode !== "image" || state.request) return;
+  cancelEnhancement();
+  const prompt = $("prompt");
+  const original = prompt.value;
+  undoEnhancement = original !== example.prompt ? { original, optimized: example.prompt } : undoEnhancement;
+  prompt.value = example.prompt;
+  const selectedModel = modelId();
+  const matches = (!selectedModel || selectedModel === catalog.model) && modeSettings("image").size === catalog.size;
+  status("已帶入「" + example.title + "」。" + (matches ? "可編輯提示詞後送出。" :
+    "範例以 " + catalog.model + "、" + catalog.size.replace("x", " × ") + " 驗證。"));
+  prompt.focus();
+  refreshComposer();
+});
 
 function loadHistory() {
   try {
@@ -289,6 +303,7 @@ function isNearEnd() {
 function refreshComposer() {
   const mode = MODES[state.mode];
   const busy = Boolean(state.request);
+  updateImageGallery(state.mode === "image", busy);
   const needsFile = Boolean(mode.fileLabel);
   $("prompt").hidden = state.mode === "transcribe";
   $("prompt").disabled = busy;

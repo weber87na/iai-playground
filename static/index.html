@@ -141,6 +141,19 @@
           </form>
           <p id="composer-status" class="composer-status" role="status" hidden></p>
           <div id="suggestions" class="suggestions"></div>
+          <section id="image-cases" class="image-cases" aria-labelledby="image-cases-title" hidden>
+            <header class="image-cases-header">
+              <div>
+                <h2 id="image-cases-title">生圖應用案例</h2>
+                <p id="image-cases-meta" role="status"></p>
+              </div>
+              <button type="button" class="quiet-button" id="toggle-image-cases" aria-controls="image-case-options" aria-expanded="true">收合案例</button>
+            </header>
+            <div id="image-case-options">
+              <div class="image-case-groups" id="image-case-groups" role="group" aria-label="案例分類"></div>
+              <div class="image-case-grid" id="image-case-grid"></div>
+            </div>
+          </section>
         </div>
       </div>
       <footer class="footer">

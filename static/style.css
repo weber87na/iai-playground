@@ -120,6 +120,19 @@ a { color: var(--accent); }
 .suggestion { min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 10px; text-align: left; border: 1px solid var(--line); border-radius: 9px; background: #fff9; color: #323232; font-size: 12.5px; font-weight: 650; }
 .suggestion:hover { background: #f2f2f2; border-color: #bdbdbd; }
 .suggestion .icon { width: 16px; height: 16px; color: #525252; }
+.image-cases { margin-top: 15px; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.image-cases-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.image-cases-header h2 { margin: 0; font-size: 14px; }
+.image-cases-header p { margin: 3px 0 0; color: var(--muted); font-size: 11.5px; }
+.image-case-groups { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: thin; padding: 10px 2px 8px; }
+.image-case-group { border: 1px solid var(--line); border-radius: 100px; background: #fff; padding: 4px 9px; font-size: 11.5px; white-space: nowrap; }
+.image-case-group:hover { background: #f3f3f3; }
+.image-case-group[aria-pressed="true"] { background: #262626; border-color: #262626; color: #fff; }
+.image-case-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding-bottom: 3px; }
+.image-case { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 4px; border: 1px solid var(--line); border-radius: 9px; background: #fff; text-align: left; font-size: 12px; font-weight: 650; }
+.image-case:hover { background: #f3f3f3; border-color: #bdbdbd; }
+.image-case img { flex: none; width: 54px; height: 54px; border-radius: 5px; object-fit: cover; background: #ededed; }
+.image-case span { overflow-wrap: anywhere; }
 .footer { display: flex; align-items: center; justify-content: center; padding: 11px 20px 15px; gap: 5px; color: var(--muted); text-align: center; font-size: 11px; }
 .footer .icon { width: 14px; height: 14px; }
 .file-required button { display: flex; align-items: center; gap: 9px; min-height: 50px; padding: 8px 12px; border: 1px dashed #bcbcbc; background: #f7f7f7; border-radius: 9px; margin-bottom: 8px; width: 100%; }
@@ -236,6 +249,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
   .composer-area, .messages { width: calc(100% - 28px); }
   .suggestions { gap: 6px; }
   .suggestion { gap: 5px; justify-content: center; font-size: 11.5px; padding: 6px 3px; }
+  .image-case-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .image-case img { width: 45px; height: 45px; }
   .history-delete { opacity: 1; }
   .footer { padding-inline: 8px; }
 }
