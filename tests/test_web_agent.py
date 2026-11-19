@@ -6,13 +6,13 @@ import httpx
 from langchain.agents import create_agent
 
 from app import BASE_URL, app
-from playground_agent import MAX_SEARCHES
+from playground_agent import FOLLOW_UP_SEARCHES, MAX_SEARCHES
 
 
-def tool_call(index=0, query="台灣半導體"):
+def tool_call(index, name, arguments):
     return {
         "id": f"call_{index}", "type": "function",
-        "function": {"name": "web_search", "arguments": json.dumps({"query": query, "kind": "news"})},
+        "function": {"name": name, "arguments": json.dumps(arguments)},
     }
 
 
@@ -51,43 +51,62 @@ class WebAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"text": "你好", "usage": None, "sources": []})
 
-    async def test_news_streams_search_progress_then_cited_answer(self):
-        call = tool_call() | {"index": 0}
-        follow_up = tool_call(1, "台灣半導體 股市公告") | {"index": 0}
+    async def test_current_role_question_searches_and_reads_multiple_sources(self):
+        call = tool_call(0, "web_search", {"query": "各分校現任校長", "related_queries": ["各分校 人事公告"]}) | {"index": 0}
+        follow_up = tool_call(1, "read_sources", {"source_ids": [2], "focus": "現任校長生效日期"}) | {"index": 0}
 
         def model(request):
             self.assertEqual(request.headers["authorization"], "Bearer test-key")
             contents = json.loads(request.content)
-            self.assertTrue(contents["stream"])
+            if not contents.get("stream"):
+                self.assertEqual([entry["function"]["name"] for entry in contents["tools"]], ["ResearchAnswer"])
+                review = json.loads(contents["messages"][-1]["content"])
+                self.assertEqual({source["id"] for source in review["sources"]}, {1, 2})
+                self.assertIn("現任校長原文", review["sources"][0]["text"])
+                return completion(calls=[tool_call(2, "ResearchAnswer", {
+                    "findings": [{"text": "依據資料。", "source_ids": [1, 2]}],
+                })])
             results = [message for message in contents["messages"] if message["role"] == "tool"]
             if not results:
                 self.assertEqual(contents["tool_choice"], "required")
+                self.assertEqual([spec["function"]["name"] for spec in contents["tools"]], ["web_search"])
                 return sse({"role": "assistant", "content": "暫存"}, {"tool_calls": [call]})
             if len(results) == 1:
                 self.assertEqual(contents["tool_choice"], "required")
+                self.assertEqual([spec["function"]["name"] for spec in contents["tools"]], ["read_sources"])
                 self.assertEqual(results[0]["tool_call_id"], "call_0")
-                self.assertEqual([row["id"] for row in json.loads(results[0]["content"])], [1])
+                evidence = json.loads(results[0]["content"])
+                self.assertEqual(len(evidence["searches"]), 2)
+                self.assertEqual([page["id"] for page in evidence["opened"]], [1, 3])
                 return sse({"role": "assistant", "tool_calls": [follow_up]})
             self.assertNotIn("tool_choice", contents)
             self.assertEqual(results[-1]["tool_call_id"], "call_1")
+            self.assertIn("現任校長原文", "".join(row["text"] for row in json.loads(results[-1]["content"])))
             return sse({"role": "assistant", "content": "依據資料 "}, {"content": "[1] [2]。"})
 
         result = {"url": "https://example.org/news", "title": "<b>報導</b>", "body": "摘要"}
         official = {"url": "https://example.gov.tw/document", "title": "公告", "body": "原始資料"}
-        with patch("playground_agent.search_web", new=AsyncMock(side_effect=[[result], [official]])) as search:
-            response = await self.post("今天的新聞", model, stream=True)
+        fallback = {"url": "https://example.net/profile", "title": "校務名單"}
+        with patch("playground_agent.search_web", new=AsyncMock(side_effect=[[result, fallback], [official]])) as search, patch(
+            "playground_agent.read_source", new=AsyncMock(side_effect=lambda url, _focus:
+                                                            None if url == official["url"] else (url, "現任校長原文")),
+        ) as reader:
+            response = await self.post("各分校現任校長是誰？", model, stream=True)
             self.assertEqual([call.args for call in search.await_args_list],
-                             [("台灣半導體", "news"), ("台灣半導體 股市公告", "web")])
+                             [("各分校現任校長", "web"), ("各分校 人事公告", "web")])
+            self.assertEqual({call.args[0] for call in reader.await_args_list},
+                             {item["url"] for item in (result, official, fallback)})
         rows = [json.loads(line) for line in response.text.splitlines()]
-        self.assertEqual([row["status"] for row in rows if "status" in row], ["正在搜尋網路", "正在核對搜尋結果"] * 2)
+        self.assertEqual([row["status"] for row in rows if "status" in row],
+                         ["正在規劃查證", "正在搜尋網路", "正在核對搜尋結果", "正在開啟原始來源", "正在核對搜尋結果", "正在核對答覆與原文"])
         answer = ""
         for row in rows:
             if row.get("reset"):
                 answer = ""
             answer += row.get("text", "")
-        self.assertEqual(answer, "依據資料 [1] [2]。")
+        self.assertEqual(answer, "依據資料。 [1] [2]")
         self.assertTrue(rows[-1]["done"])
-        self.assertEqual([source["url"] for source in rows[-1]["sources"]], [result["url"], official["url"]])
+        self.assertEqual([source["url"] for source in rows[-1]["sources"]], [result["url"], fallback["url"]])
 
     async def test_unavailable_search_shows_notice_and_ends_at_call_limit(self):
         rounds = 0
@@ -97,29 +116,60 @@ class WebAgentTests(unittest.IsolatedAsyncioTestCase):
             rounds += 1
             body = json.loads(request.content)
             if "tools" in body:
-                return completion(calls=[tool_call(rounds, f"台灣半導體 {rounds}")])
-            self.assertEqual(rounds, MAX_SEARCHES + 1)
+                return completion(calls=[tool_call(rounds, "web_search", {"query": f"台灣半導體 {rounds}"})])
+            self.assertEqual(rounds, MAX_SEARCHES - FOLLOW_UP_SEARCHES + 1)
             return completion("模型自行提出的未查證結果")
 
         with patch("playground_agent.search_web", new=AsyncMock(side_effect=TimeoutError)) as search:
             response = await self.post("上網查今天的新聞", model)
-            self.assertEqual(search.await_count, MAX_SEARCHES)
+            self.assertEqual(search.await_count, MAX_SEARCHES - FOLLOW_UP_SEARCHES)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sources"], [])
-        self.assertEqual(response.json()["notice"], "這次搜尋未取得可引用的來源。")
-        self.assertIn("找不到足以查證", response.json()["text"])
+        self.assertIn("未能讀取足以查證", response.json()["text"])
 
-    async def test_six_city_roster_uses_verified_result_without_model_guess(self):
-        def model(_request):
-            self.fail("Verified roster must not be rewritten by an LLM")
+    async def test_drops_unopened_citation(self):
+        def model(request):
+            body = json.loads(request.content)
+            names = [entry["function"]["name"] for entry in body.get("tools", [])]
+            if names == ["ResearchAnswer"]:
+                return completion(calls=[tool_call(2, "ResearchAnswer", {
+                    "findings": [{"text": "推測的版本", "source_ids": [99]}],
+                })])
+            if names and not any(message["role"] == "tool" for message in body["messages"]):
+                return completion(calls=[tool_call(0, "web_search", {"query": "目前版本", "related_queries": ["發布公告"]})])
+            return completion("推測的版本 [99]。")
 
-        evidence = {"text": "依正式公報核對", "sources": [{"id": 1, "url": "https://bulletin.cec.gov.tw/"}]}
-        with patch("playground_agent.roster_year", return_value=2026), patch(
-            "playground_agent.lookup_roster", new=AsyncMock(return_value=evidence),
-        ) as lookup:
-            response = await self.post("六都的市長候選人是誰", model)
-            lookup.assert_awaited_once_with(2026)
-        self.assertEqual(response.json(), {**evidence, "usage": None})
+        evidence = [[{"url": "https://example.org/releases"}], [{"url": "https://example.net/releases"}]]
+        with patch("playground_agent.search_web", new=AsyncMock(side_effect=evidence)), patch(
+            "playground_agent.read_source", new=AsyncMock(side_effect=lambda url, _focus: (url, "發行說明")),
+        ):
+            response = await self.post("目前的版本是多少", model)
+        self.assertIn("未能產生引用原文的查證結果", response.json()["text"])
+        self.assertNotIn("[99]", response.json()["text"])
+
+    async def test_review_follows_up_on_missing_information(self):
+        def model(request):
+            body = json.loads(request.content)
+            names = [entry["function"]["name"] for entry in body.get("tools", [])]
+            if names == ["ResearchAnswer"]:
+                evidence = json.loads(body["messages"][-1]["content"])["sources"]
+                verdict = {"findings": [{"text": "現行版本為 2.0。", "source_ids": [1]}]}
+                if len(evidence) == 2:
+                    verdict.update(unresolved=["生效日期"], follow_up_queries=["版本 2.0 生效公告"])
+                else:
+                    verdict["findings"].append({"text": "生效日期為 2 月 1 日。", "source_ids": [3]})
+                return completion(calls=[tool_call(3, "ResearchAnswer", verdict)])
+            if not any(message["role"] == "tool" for message in body["messages"]):
+                return completion(calls=[tool_call(0, "web_search", {"query": "現行版本", "related_queries": ["版本公告"]})])
+            return completion("現行版本為 2.0。")
+
+        sources = [[{"url": f"https://{domain}/release"}] for domain in ("example.org", "example.net", "example.com")]
+        with patch("playground_agent.search_web", new=AsyncMock(side_effect=sources)) as search, patch(
+            "playground_agent.read_source", new=AsyncMock(side_effect=lambda url, _focus: (url, "發行原文")),
+        ):
+            response = await self.post("現行版本和生效日期是什麼，請查證", model)
+        search.assert_awaited_with("版本 2.0 生效公告", "web")
+        self.assertIn("生效日期為 2 月 1 日。 [3]", response.json()["text"])
 
     async def test_search_off_still_uses_agent_and_streams_without_tools(self):
         def model(request):

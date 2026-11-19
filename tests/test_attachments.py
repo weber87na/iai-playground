@@ -36,14 +36,14 @@ class AttachmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(first[0]["text"], "First")
             self.assertEqual([part["text"] for part in first[1:]], ["附件：older.txt", "older contents"])
             self.assertEqual(messages[1]["content"], "Answer")
-            self.assertEqual(latest[0]["text"], "Latest")
+            self.assertEqual(latest[0]["text"], "Read the next attachment")
             self.assertEqual([part["text"] for part in latest[1:]], ["附件：latest.txt", "current contents"])
             return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "Both received"}}]})
 
         payload = {
             "model": "Furen-omni",
             "messages": [{"role": "user", "content": "First"}, {"role": "assistant", "content": "Answer"},
-                         {"role": "user", "content": "Latest"}],
+                         {"role": "user", "content": "Read the next attachment"}],
             "attachment_indices": [2, 0],
         }
         files = [("file", ("latest.txt", b"current contents", "text/plain")),

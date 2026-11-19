@@ -46,7 +46,7 @@ uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-
 ## LangChain Agent 與連網搜尋
 
 - 對話、附件問答、提示詞優化與生圖提示詞整理都由 LangChain Agent 使用指定的 iAI 文字模型。文字對話預設開啟連網搜尋，詢問「今天的台灣科技新聞」或請它上網查證時，Agent 會先查詢再根據結果回答。串流模式會顯示搜尋進度，回覆下方可開啟來源。
-- 新聞與查證問題會用不同關鍵字搜尋，優先核對官方公告和第一手資料。每輪最多六次搜尋，缺少能支持答案的資料時會提示查證限制。查詢 2026 年六都市長名單時，Agent 會讀取中選會登記彙總表與各市公報，逐城核對後附上來源。
+- Agent 依照問題的時間、狀態與分項規劃查詢，會用不同關鍵字搜尋並打開相關的公開網頁或 PDF，優先核對官方公告與第一手資料。答覆前會用原文複核每個結論，發現缺漏時會補查。每輪最多十組查詢與十個原文來源，答案以編號連到實際讀過的來源，查證資料不足時會顯示限制。
 - 可在「參數」關閉「連網搜尋」，Agent 仍會使用同一個模型回答。如果選用的模型不支援工具呼叫，可以切換到 `Furen-omni` 或關閉連網搜尋後重試。Agent 的多次模型呼叫會使用這組 iAI 金鑰的額度。
 - 文字生圖、圖片編輯、語音轉文字、文字轉語音、文字向量化與文件重排序由 Agent 執行所選工作區的對應 iAI 工具。工作區已指定工具，因此每個專用工具只執行一次，也不會為選擇工具額外呼叫文字模型。
 - 預設用 [DDGS](https://github.com/deedy5/ddgs) 搜尋，使用者貼上 iAI API Key 即可使用。若有 [Brave Search API](https://api-dashboard.search.brave.com/app/keys) 金鑰，可在本機環境變數或 Azure App Service 應用程式設定加入 `BRAVE_SEARCH_API_KEY`，改用 Brave Search。搜尋服務只接收 agent 產生的關鍵字，iAI API Key 送往高科大 API。
