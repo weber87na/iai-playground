@@ -59,7 +59,7 @@ class AttachmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("web_search", body)
             content = body["messages"][0]["content"]
             self.assertEqual([part["text"] for part in content[::2]], ["Read files", "A", "B"])
-            return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "OK"}}]})
 
         payload = {"model": "Furen-omni", "messages": [{"role": "user", "content": "Read files"}],
                    "attachment_index": 0, "web_search": False}

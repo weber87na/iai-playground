@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from attachments import MAX_ATTACHMENTS, AttachmentError, attachment_parts, reference_sheet, text_part
-from web_agent import agent_events
+from playground_agent import chat_agent_events, iai_chat_model, run_task_agent
 
 
 IAIHUB_URL = "https://www.iai.nkust.edu.tw/aihub"
@@ -109,12 +109,16 @@ async def version():
     return {"commit": BUILD_REVISION}
 
 
-def auth(request, operation=""):
+def api_key(request):
     token = request.headers.get("authorization", "").removeprefix("Bearer ")
     if not re.fullmatch(r"[!-~]{1,2048}", token):
         raise HTTPException(401, "請先貼上有效的 iAI API Key。")
+    return token
+
+
+def auth(request, operation=""):
     header = "x-litellm-api-key" if operation == "rerank" else "Authorization"
-    return {header: f"Bearer {token}"}
+    return {header: f"Bearer {api_key(request)}"}
 
 
 def check_status(response):
@@ -135,11 +139,11 @@ def check_status(response):
                         messages.get(status, f"iAI 服務回傳 HTTP {status}。"))
 
 
-async def send(request, method, route, *, stream=False, operation="", **kwargs):
+async def send(request, method, route, *, operation="", **kwargs):
     client = request.app.state.upstream
     upstream = client.build_request(method, route, headers=auth(request, operation), **kwargs)
     try:
-        response = await client.send(upstream, stream=stream)
+        response = await client.send(upstream)
     except httpx.TimeoutException as exc:
         raise HTTPException(504, "等待 iAI 回應逾時。請確認後再重試。") from exc
     except httpx.RequestError as exc:
@@ -247,64 +251,13 @@ PROMPT_GUIDANCE = {
 }
 
 
-def text_content(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "".join(part["text"] for part in value if isinstance(part, dict)
-                       and isinstance(part.get("text"), str))
-    return ""
-
-
 def event(**fields):
     return json.dumps(fields, ensure_ascii=False) + "\n"
 
 
-async def sse_data(response):
-    parts = []
-    async for line in response.aiter_lines():
-        if line.startswith("data:"):
-            parts.append(line[5:].removeprefix(" "))
-        elif not line and parts:
-            yield "\n".join(parts)
-            parts.clear()
-    if parts:
-        yield "\n".join(parts)
-
-
-async def chat_events(response):
-    finished = False
-    try:
-        async for data in sse_data(response):
-            if data == "[DONE]":
-                finished = True
-                break
-            chunk = json.loads(data)
-            if chunk.get("error"):
-                raise ValueError("Upstream stream error")
-            choices = chunk.get("choices") or []
-            if choices:
-                choice = choices[0]
-                delta = choice.get("delta") or {}
-                content = text_content(delta.get("content"))
-                if content:
-                    yield event(text=content)
-                finished = finished or bool(choice.get("finish_reason"))
-            if isinstance(chunk.get("usage"), dict):
-                yield event(usage=chunk["usage"])
-        if finished:
-            yield event(done=True)
-        else:
-            yield event(error="iAI 串流提前中斷，請重試或在參數中關閉串流。")
-    except (httpx.RequestError, ValueError, AttributeError, TypeError, IndexError):
-        yield event(error="iAI 串流回應中斷，請重試或在參數中關閉串流。")
-    finally:
-        await response.aclose()
-
-
 @app.post("/api/chat")
 async def chat(request: Request, payload: ChatRequest):
-    return await user_chat(request, payload.model_dump(exclude_none=True))
+    return await run_chat_agent(request, payload.model_dump(exclude_none=True))
 
 
 @app.post("/api/prompt/enhance")
@@ -320,9 +273,10 @@ async def enhance_prompt(request: Request, payload: PromptEnhancementRequest):
         + PROMPT_GUIDANCE[payload.mode]
     )
     context = [message.model_dump() | {"content": message.content[-1500:]} for message in payload.context]
-    result = await complete_chat(request, {
+    result = await run_chat_agent(request, {
         "model": payload.model,
         "stream": False,
+        "web_search": False,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps({"draft_prompt": draft, "context": context}, ensure_ascii=False)},
@@ -333,7 +287,7 @@ async def enhance_prompt(request: Request, payload: PromptEnhancementRequest):
 
 @app.post("/api/chat/attachments")
 async def chat_with_attachments(request: Request):
-    auth(request)
+    api_key(request)
     async with request.form(max_files=MAX_ATTACHMENTS, max_fields=1, max_part_size=2 * 1024 * 1024) as form:
         try:
             payload = AttachedChatRequest.model_validate_json(form.get("payload"))
@@ -364,15 +318,15 @@ async def chat_with_attachments(request: Request):
         if isinstance(message["content"], str):
             message["content"] = [text_part(message["content"])]
         message["content"].extend(parts)
-    return await user_chat(request, body)
+    return await run_chat_agent(request, body)
 
 
-async def researched_chat_events(request, body, key):
+async def chat_chunks(request, body, key):
     try:
-        async for chunk in agent_events(body, key, BASE_URL, request.app.state.upstream):
+        async for chunk in chat_agent_events(body, key, BASE_URL, request.app.state.upstream):
             yield chunk
     except APIStatusError as exc:
-        if exc.status_code == 400:
+        if exc.status_code == 400 and body["web_search"]:
             raise HTTPException(400, "iAI 拒絕此請求。可檢查模型參數，或關閉連網搜尋後重試。") from exc
         check_status(exc.response)
     except APITimeoutError as exc:
@@ -380,17 +334,17 @@ async def researched_chat_events(request, body, key):
     except APIConnectionError as exc:
         raise HTTPException(502, "無法連線到 iAI。請檢查網路後再試。") from exc
     except (APIError, ValueError, RecursionError) as exc:
-        raise HTTPException(502, "iAI 未完成連網對話。可重試或在參數中關閉連網搜尋。") from exc
+        if body["web_search"]:
+            raise HTTPException(502, "iAI 未完成連網對話。可重試或在參數中關閉連網搜尋。") from exc
+        raise HTTPException(502, "iAI 未回傳可顯示的對話內容。") from exc
 
 
-async def user_chat(request, body):
-    if not body.pop("web_search"):
-        return await complete_chat(request, body)
-    key = auth(request)["Authorization"].removeprefix("Bearer ")
+async def run_chat_agent(request, body):
+    key = api_key(request)
 
     async def stream():
         try:
-            async for chunk in researched_chat_events(request, body, key):
+            async for chunk in chat_chunks(request, body, key):
                 yield event(**chunk)
         except HTTPException as exc:
             yield event(error=exc.detail)
@@ -399,7 +353,7 @@ async def user_chat(request, body):
         return StreamingResponse(stream(), media_type="application/x-ndjson",
                                  headers={"X-Accel-Buffering": "no"})
     result = {}
-    async for chunk in researched_chat_events(request, body, key):
+    async for chunk in chat_chunks(request, body, key):
         if "text" in chunk:
             result["text"] = chunk["text"]
         if chunk.get("done"):
@@ -407,23 +361,13 @@ async def user_chat(request, body):
     return result
 
 
-async def complete_chat(request, body):
-    streaming = body["stream"]
-    response = await send(request, "POST", "chat/completions", stream=streaming, json=body)
-    if streaming and "text/event-stream" in response.headers.get("content-type", "").lower():
-        return StreamingResponse(chat_events(response), media_type="application/x-ndjson",
-                                 headers={"X-Accel-Buffering": "no"})
-    try:
-        await response.aread()
-        body = response_json(response)
-        content = text_content(body["choices"][0]["message"].get("content"))
-    except (KeyError, IndexError, TypeError, AttributeError, httpx.RequestError) as exc:
-        raise HTTPException(502, "iAI 未回傳可顯示的對話內容。") from exc
-    finally:
-        await response.aclose()
-    if not content.strip():
-        raise HTTPException(502, "iAI 未回傳可顯示的對話內容。")
-    return {"text": content, "usage": body.get("usage")}
+async def task_response(request, operation, model_id, **kwargs):
+    model = iai_chat_model(model_id, api_key(request), BASE_URL, request.app.state.upstream)
+
+    async def execute():
+        return await send(request, "POST", ROUTES[operation], operation=operation, **kwargs)
+
+    return await run_task_agent(model, operation, execute)
 
 
 class TaskRequest(BaseModel):
@@ -462,7 +406,7 @@ async def run_task(
         data.update(query=payload.text, documents=payload.documents)
         if payload.top_n:
             data["top_n"] = payload.top_n
-    response = await send(request, "POST", ROUTES[operation], json=data, operation=operation)
+    response = await task_response(request, operation, payload.model, json=data)
     if operation == "speak":
         media_type = response.headers.get("content-type", "").partition(";")[0].strip().lower()
         if media_type == "application/octet-stream" and response.content:
@@ -481,7 +425,7 @@ async def run_task(
 
 @app.post("/api/upload/{operation}")
 async def run_upload(request: Request, operation: Literal["edit", "transcribe"]):
-    auth(request, operation)
+    api_key(request)
     max_files = MAX_ATTACHMENTS if operation == "edit" else 1
     async with request.form(max_files=max_files, max_fields=4) as form:
         model = form.get("model", "")
@@ -522,6 +466,5 @@ async def run_upload(request: Request, operation: Literal["edit", "transcribe"])
             upload = (Path(file.filename or "upload").name, await file.read(),
                       file.content_type or "application/octet-stream")
         field = "image" if operation == "edit" else "file"
-        response = await send(request, "POST", ROUTES[operation], data=data,
-                              files={field: upload})
+        response = await task_response(request, operation, model, data=data, files={field: upload})
     return response_json(response)

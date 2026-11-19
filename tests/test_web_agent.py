@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from langchain.agents import create_agent
 
 from app import BASE_URL, app
 
@@ -28,12 +29,12 @@ def sse(*deltas):
 
 
 class WebAgentTests(unittest.IsolatedAsyncioTestCase):
-    async def post(self, prompt, upstream_mock, *, stream=False):
+    async def post(self, prompt, upstream_mock, *, stream=False, web_search=True):
         async with httpx.AsyncClient(base_url=BASE_URL, transport=httpx.MockTransport(upstream_mock)) as upstream:
             app.state.upstream = upstream
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
                 return await client.post("/api/chat", headers={"Authorization": "Bearer test-key"}, json={
-                    "model": "Furen-omni", "stream": stream,
+                    "model": "Furen-omni", "stream": stream, "web_search": web_search,
                     "messages": [{"role": "user", "content": prompt}],
                 })
 
@@ -43,7 +44,7 @@ class WebAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("tool_choice", contents)
             return completion("你好")
 
-        with patch("web_agent.search_web", new_callable=AsyncMock) as search:
+        with patch("playground_agent.search_web", new_callable=AsyncMock) as search:
             response = await self.post("翻譯 hello", model)
             search.assert_not_awaited()
         self.assertEqual(response.status_code, 200)
@@ -67,7 +68,7 @@ class WebAgentTests(unittest.IsolatedAsyncioTestCase):
             return sse({"role": "assistant", "content": "依據報導 "}, {"content": "[1]。"})
 
         result = {"url": "https://example.org/news", "title": "<b>報導</b>", "body": "摘要"}
-        with patch("web_agent.search_web", new=AsyncMock(return_value=[result])) as search:
+        with patch("playground_agent.search_web", new=AsyncMock(return_value=[result])) as search:
             response = await self.post("今天的新聞", model, stream=True)
             search.assert_awaited_once_with("台灣半導體", "news")
         rows = [json.loads(line) for line in response.text.splitlines()]
@@ -94,9 +95,24 @@ class WebAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rounds, 4)
             return completion("暫時無法查證。")
 
-        with patch("web_agent.search_web", new=AsyncMock(side_effect=TimeoutError)) as search:
+        with patch("playground_agent.search_web", new=AsyncMock(side_effect=TimeoutError)) as search:
             response = await self.post("上網查今天的新聞", model)
             self.assertEqual(search.await_count, 3)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sources"], [])
         self.assertEqual(response.json()["notice"], "這次搜尋未取得可引用的來源。")
+
+    async def test_search_off_still_uses_agent_and_streams_without_tools(self):
+        def model(request):
+            contents = json.loads(request.content)
+            self.assertTrue(contents["stream"])
+            self.assertNotIn("tools", contents)
+            self.assertNotIn("tool_choice", contents)
+            return sse({"role": "assistant", "content": "搜尋已關閉。"})
+
+        with patch("playground_agent.create_agent", wraps=create_agent) as factory:
+            response = await self.post("今天的新聞", model, stream=True, web_search=False)
+            self.assertEqual(factory.call_args.kwargs["tools"], [])
+        rows = [json.loads(line) for line in response.text.splitlines()]
+        self.assertEqual("".join(row.get("text", "") for row in rows), "搜尋已關閉。")
+        self.assertEqual(rows[-1], {"done": True, "usage": None})

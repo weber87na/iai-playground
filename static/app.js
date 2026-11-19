@@ -886,7 +886,7 @@ async function submit(e) {
   if (files.length) user.attachments = files.map((file) => file.name);
   const assistant = { role: "assistant", model, text: "", pending: true };
   if (brief) assistant.waiting = "正在整理生圖提示詞";
-  else if (mode === "chat" && modeSettings(mode).web_search) assistant.waiting = "等待 agent 回應";
+  else if (mode === "chat") assistant.waiting = "等待 Agent 回應";
   messages.push(user);
   messages.push(assistant);
   $("prompt").value = "";

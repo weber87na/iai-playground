@@ -99,14 +99,43 @@ def needs_search(messages):
     return False
 
 
-async def agent_events(body, key, base_url, client):
+def iai_chat_model(model, key, base_url, client, **options):
+    return ChatOpenAI(model=model, api_key=key, base_url=base_url, http_async_client=client,
+                      max_retries=0, stream_usage=False, use_responses_api=False, **options)
+
+
+async def run_task_agent(model, operation, execute):
+    @tool(f"iai_{operation}", description="執行使用者在工作區選定的 iAI 任務。",
+          return_direct=True, response_format="content_and_artifact")
+    async def task():
+        return "iAI 任務已完成。", await execute()
+
+    @wrap_model_call
+    async def select_task(_request, _handler):
+        # The workspace already identifies the tool and validates its inputs.
+        return AIMessage(content="", tool_calls=[{"name": task.name, "args": {}, "id": "workspace_task"}])
+
+    agent = create_agent(model=model, tools=[task], middleware=[select_task])
+    with tracing_context(enabled=False):
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": task.name}]})
+    message = result["messages"][-1]
+    if not isinstance(message, ToolMessage) or message.artifact is None:
+        raise ValueError("iAI task tool did not return a result")
+    return message.artifact
+
+
+async def chat_agent_events(body, key, base_url, client):
     sources = {}
     searches = 0
-    messages = [message for message in body["messages"] if message["role"] != "system"]
-    system = POLICY.format(date=datetime.now(TAIPEI).date())
-    custom = [message["content"] for message in body["messages"] if message["role"] == "system"]
-    if custom:
-        system += "\n\n使用者設定的角色與回覆偏好：\n" + "\n".join(custom)
+    search_enabled = body["web_search"]
+    messages = body["messages"]
+    system = None
+    if search_enabled:
+        system = POLICY.format(date=datetime.now(TAIPEI).date())
+        custom = [message["content"] for message in messages if message["role"] == "system"]
+        if custom:
+            system += "\n\n使用者設定的角色與回覆偏好：\n" + "\n".join(custom)
+        messages = [message for message in messages if message["role"] != "system"]
 
     @tool
     async def web_search(
@@ -144,13 +173,13 @@ async def agent_events(body, key, base_url, client):
             request = request.override(tool_choice="required")
         return await handler(request)
 
-    require_search = needs_search(messages)
+    require_search = search_enabled and needs_search(messages)
     options = {"temperature": body["temperature"]} if "temperature" in body else {}
     if "max_tokens" in body:
         options["extra_body"] = {"max_tokens": body["max_tokens"]}
-    model = ChatOpenAI(model=body["model"], api_key=key, base_url=base_url, http_async_client=client,
-                       max_retries=0, stream_usage=False, use_responses_api=False, **options)
-    graph = create_agent(model=model, tools=[web_search], system_prompt=system, middleware=[choose_tools])
+    model = iai_chat_model(body["model"], key, base_url, client, **options)
+    graph = create_agent(model=model, tools=[web_search] if search_enabled else [], system_prompt=system,
+                         middleware=[choose_tools] if search_enabled else [])
     streaming = body["stream"]
     modes = ["updates", "messages"] if streaming else ["updates"]
     usage = None
@@ -186,9 +215,10 @@ async def agent_events(body, key, base_url, client):
         raise ValueError("Search was required but not executed")
     if final_text != displayed:
         yield {"text": final_text, "reset": bool(displayed)}
-    summary = {"done": True, "usage": usage,
-               "sources": [{name: value for name, value in result.items() if name != "snippet"}
-                           for result in sources.values()]}
+    summary = {"done": True, "usage": usage}
+    if search_enabled:
+        summary["sources"] = [{name: value for name, value in result.items() if name != "snippet"}
+                              for result in sources.values()]
     if searches and not sources:
         summary["notice"] = "這次搜尋未取得可引用的來源。"
     yield summary

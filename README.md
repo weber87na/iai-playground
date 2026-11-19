@@ -43,10 +43,11 @@ uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-
 
 每個工作區會依功能對照表與金鑰權限設定預設模型。文字對話優先使用有「視覺」標籤的 `Furen-omni`。若有多個相容模型，可用頂部的「切換」選擇。新模型需先核對功能，再加入 `static/app.js` 的 `MODE_MODELS`。各模型的功能與參數可查 [官方模型目錄](https://www.iai.nkust.edu.tw/models)。如果某個對話模型不接受串流，可在參數關閉串流後手動重試。工作區的上傳上限為 20 MB，iAI 端可能有個別限制。
 
-## 連網搜尋
+## LangChain Agent 與連網搜尋
 
-- 文字對話預設由 LangChain Agent 使用目前選取的 iAI 模型。詢問「今天的台灣科技新聞」或請它上網查證時，agent 會先呼叫搜尋工具，再根據搜尋結果回答。它也能自行判斷是否需要查證外部資訊。串流模式會顯示搜尋進度，回覆下方可開啟來源。
-- 可在「參數」關閉「連網搜尋」，直接使用原本的 iAI 對話。如果選用的模型不支援工具呼叫，可以切換到 `Furen-omni` 或關閉連網搜尋後重試。每輪搜尋最多三次，agent 的多次模型呼叫會使用這組 iAI 金鑰的額度。
+- 對話、附件問答、提示詞優化與生圖提示詞整理都由 LangChain Agent 使用指定的 iAI 文字模型。文字對話預設開啟連網搜尋，詢問「今天的台灣科技新聞」或請它上網查證時，Agent 會先查詢再根據結果回答。串流模式會顯示搜尋進度，回覆下方可開啟來源。
+- 可在「參數」關閉「連網搜尋」，Agent 仍會使用同一個模型回答。如果選用的模型不支援工具呼叫，可以切換到 `Furen-omni` 或關閉連網搜尋後重試。每輪搜尋最多三次，Agent 的多次模型呼叫會使用這組 iAI 金鑰的額度。
+- 文字生圖、圖片編輯、語音轉文字、文字轉語音、文字向量化與文件重排序由 Agent 執行所選工作區的對應 iAI 工具。工作區已指定工具，因此每個專用工具只執行一次，也不會為選擇工具額外呼叫文字模型。
 - 預設用 [DDGS](https://github.com/deedy5/ddgs) 搜尋，使用者貼上 iAI API Key 即可使用。若有 [Brave Search API](https://api-dashboard.search.brave.com/app/keys) 金鑰，可在本機環境變數或 Azure App Service 應用程式設定加入 `BRAVE_SEARCH_API_KEY`，改用 Brave Search。搜尋服務只接收 agent 產生的關鍵字，iAI API Key 送往高科大 API。
 
 ## 優化提示詞與重跑請求
