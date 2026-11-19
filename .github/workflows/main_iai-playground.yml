@@ -19,6 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Record build revision
+        run: git rev-parse HEAD > build-revision.txt
+
       - name: Set up Python version
         uses: actions/setup-python@v5
         with:
@@ -73,4 +76,3 @@ jobs:
         with:
           app-name: 'iai-playground'
           slot-name: 'Production'
-          

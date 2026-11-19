@@ -60,7 +60,27 @@ function inline(parent, text) {
   parent.append(text.slice(start));
 }
 
-export function markdown(text) {
+const DETECT_LANGUAGES = ["bash", "powershell", "python", "javascript", "typescript", "json", "sql", "xml", "css", "yaml"];
+
+export function setHighlightedCode(code, text, language = "") {
+  code.textContent = text;
+  code.className = "";
+  delete code.dataset.highlighted;
+  const highlighter = globalThis.hljs;
+  if (!highlighter || !text.trim() || text.length > 60_000) return;
+  if (language) {
+    if (!highlighter.getLanguage(language)) return;
+    code.classList.add("language-" + language);
+  } else {
+    if (text.length > 8_000) return;
+    const detected = highlighter.highlightAuto(text, DETECT_LANGUAGES);
+    if (!detected.language || detected.relevance < 2) return;
+    code.classList.add("language-" + detected.language);
+  }
+  highlighter.highlightElement(code);
+}
+
+export function markdown(text, highlight = true) {
   const fragment = document.createDocumentFragment();
   const paragraphs = [];
   let listing;
@@ -77,12 +97,21 @@ export function markdown(text) {
     const line = lines[i];
     const heading = /^\s*(#{1,6})\s+(.+)/.exec(line);
     const item = /^\s*([-+*]|\d+[.)])\s+(.+)/.exec(line);
-    if (line.trimStart().startsWith("```")) {
+    const fence = /^\s*(\x60{3,}|~{3,})\s*([\w+#.-]*)/.exec(line);
+    if (fence) {
       flush();
-      const code = [];
-      while (++i < lines.length && !lines[i].trimStart().startsWith("```")) code.push(lines[i]);
+      const [, marker, language] = fence;
+      const snippet = [];
+      while (++i < lines.length) {
+        const close = lines[i].trim();
+        if (close.length >= marker.length && close === marker[0].repeat(close.length)) break;
+        snippet.push(lines[i]);
+      }
       const pre = node("pre");
-      pre.append(node("code", "", code.join("\n")));
+      const code = node("code");
+      if (highlight) setHighlightedCode(code, snippet.join("\n"), language.toLowerCase());
+      else code.textContent = snippet.join("\n");
+      pre.append(code);
       fragment.append(pre);
     } else if (heading) {
       flush();
@@ -189,10 +218,12 @@ export function renderMessage(message) {
       actions.append(download(message.audio, "下載音訊", "iai-speech." + message.extension));
     } else if (message.json) {
       const pre = node("pre");
-      pre.append(node("code", "", message.text));
+      const code = node("code");
+      setHighlightedCode(code, message.text, "json");
+      pre.append(code);
       content.append(pre);
     } else {
-      content.append(markdown(message.text));
+      content.append(markdown(message.text, !message.pending));
     }
     if (!message.pending && message.text) {
       const copy = iconButton("copy", "複製回應", async () => {

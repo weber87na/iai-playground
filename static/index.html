@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#fafafa">
   <title>iAI Playground</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/vendor/highlight/highlight.min.js"></script>
+  <script defer src="/static/vendor/highlight/powershell.min.js"></script>
   <script type="module" src="/static/app.js"></script>
 </head>
 <body>
@@ -37,7 +39,11 @@
     <aside class="sidebar" id="sidebar" aria-label="工作區導覽">
       <div class="brand">
         <span class="brand-mark"><svg class="icon"><use href="#i-orbit"></use></svg></span>
-        <div><strong>iAI Playground <small class="app-version" aria-label="版本 0.1">0.1</small></strong><span>NKUST AIHub</span></div>
+        <div>
+          <strong>iAI Playground</strong>
+          <span>NKUST AIHub</span>
+          <small class="app-version" id="build-revision" hidden></small>
+        </div>
       </div>
       <button class="new-button" id="new-chat"><svg class="icon"><use href="#i-plus"></use></svg>新對話</button>
 
@@ -128,7 +134,10 @@
               </div>
               <button class="submit-button" type="submit" id="submit">送出</button>
             </div>
-              <p id="attachment-hint" class="attachment-hint" hidden></p>
+              <div class="attachment-footer">
+                <p id="attachment-hint" class="attachment-hint" hidden></p>
+                <button type="button" class="quiet-button" id="clear-attachment-context" hidden>清除舊附件</button>
+              </div>
           </form>
           <p id="composer-status" class="composer-status" role="status" hidden></p>
           <div id="suggestions" class="suggestions"></div>

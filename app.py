@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 from contextlib import asynccontextmanager
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -14,12 +15,13 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from attachments import MAX_ATTACHMENTS, AttachmentError, attachment_parts, text_part
+from attachments import MAX_ATTACHMENTS, AttachmentError, attachment_parts, reference_sheet, text_part
 
 
 IAIHUB_URL = "https://www.iai.nkust.edu.tw/aihub"
 BASE_URL = f"{IAIHUB_URL}/v1/"
-STATIC = Path(__file__).parent / "static"
+PROJECT_ROOT = Path(__file__).resolve().parent
+STATIC = PROJECT_ROOT / "static"
 MAX_FILE = 20 * 1024 * 1024
 VISION_MODEL = "Furen-omni"
 ROUTES = {
@@ -30,6 +32,25 @@ ROUTES = {
     "embed": "embeddings",
     "rerank": "rerank",
 }
+
+def build_revision():
+    try:
+        packaged = (PROJECT_ROOT / "build-revision.txt").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        packaged = ""
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", packaged):
+        return packaged[:8]
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, capture_output=True,
+            text=True, check=True, timeout=2,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return revision[:8] if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) else None
+
+
+BUILD_REVISION = build_revision()
 
 
 @asynccontextmanager
@@ -57,7 +78,7 @@ async def response_headers(request: Request, call_next):
                 return JSONResponse({"detail": "請從 Playground 頁面發送請求。"}, 403)
         length = request.headers.get("content-length")
         if length and length.isdecimal() and int(length) > MAX_FILE + 1024 * 1024:
-            return JSONResponse({"detail": "請縮小檔案後再試，單檔上限 20 MB。"}, 413)
+            return JSONResponse({"detail": "請縮小檔案後再試，附件合計上限 20 MB。"}, 413)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -79,6 +100,11 @@ async def invalid_input(request, exc):
 @app.get("/")
 async def index():
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/version")
+async def version():
+    return {"commit": BUILD_REVISION}
 
 
 def auth(request, operation=""):
@@ -198,7 +224,10 @@ class ChatRequest(BaseModel):
 
 
 class AttachedChatRequest(ChatRequest):
-    attachment_index: int = Field(ge=0)
+    attachment_index: int | None = Field(default=None, ge=0)
+    attachment_indices: list[Annotated[int, Field(ge=0)]] | None = Field(
+        default=None, min_length=1, max_length=MAX_ATTACHMENTS,
+    )
 
 
 class PromptEnhancementRequest(BaseModel):
@@ -307,23 +336,31 @@ async def chat_with_attachments(request: Request):
             payload = AttachedChatRequest.model_validate_json(form.get("payload"))
         except ValidationError as exc:
             raise HTTPException(422, "請檢查附件對話的訊息格式。") from exc
-        index = payload.attachment_index
-        if index >= len(payload.messages) or payload.messages[index].role != "user":
-            raise HTTPException(422, "附件必須加在使用者訊息中。")
         if payload.model != VISION_MODEL:
             raise HTTPException(422, "附件對話請使用 Furen-omni。")
         files = form.getlist("file")
         if not files or any(not isinstance(file, UploadFile) or not file.size for file in files):
             raise HTTPException(422, "請上傳非空白的附件。")
+        indices = payload.attachment_indices
+        if indices is None and payload.attachment_index is not None:
+            indices = [payload.attachment_index] * len(files)
+        if not indices or len(indices) != len(files) or any(
+            index >= len(payload.messages) or payload.messages[index].role != "user" for index in indices
+        ):
+            raise HTTPException(422, "每個附件都必須對應一則使用者訊息。")
         if sum(file.size for file in files) > MAX_FILE:
             raise HTTPException(413, "附件合計上限為 20 MB。")
         data = [(file.filename or "附件", file.content_type or "", await file.read()) for file in files]
     try:
-        parts = await run_in_threadpool(attachment_parts, data)
+        groups = await run_in_threadpool(attachment_parts, data)
     except AttachmentError as exc:
         raise HTTPException(422, str(exc)) from exc
-    body = payload.model_dump(exclude_none=True, exclude={"attachment_index"})
-    body["messages"][index]["content"] = [text_part(payload.messages[index].content), *parts]
+    body = payload.model_dump(exclude_none=True, exclude={"attachment_index", "attachment_indices"})
+    for index, parts in zip(indices, groups, strict=True):
+        message = body["messages"][index]
+        if isinstance(message["content"], str):
+            message["content"] = [text_part(message["content"])]
+        message["content"].extend(parts)
     return await complete_chat(request, body)
 
 
@@ -401,14 +438,16 @@ async def run_task(
 
 @app.post("/api/upload/{operation}")
 async def run_upload(request: Request, operation: Literal["edit", "transcribe"]):
-    async with request.form(max_files=1, max_fields=4) as form:
+    auth(request, operation)
+    max_files = MAX_ATTACHMENTS if operation == "edit" else 1
+    async with request.form(max_files=max_files, max_fields=4) as form:
         model = form.get("model", "")
-        file = form.get("file")
+        uploads = form.getlist("file")
         if (not isinstance(model, str) or not model.strip() or len(model) > 256
-                or not isinstance(file, UploadFile) or not file.size):
+                or not uploads or any(not isinstance(file, UploadFile) or not file.size for file in uploads)):
             raise HTTPException(422, "請先選擇模型和檔案。")
-        if file.size > MAX_FILE:
-            raise HTTPException(413, "請上傳 20 MB 以下的檔案。")
+        if sum(file.size for file in uploads) > MAX_FILE:
+            raise HTTPException(413, "附件合計上限為 20 MB。")
         data = {"model": model}
         if operation == "edit":
             prompt = form.get("prompt")
@@ -425,9 +464,21 @@ async def run_upload(request: Request, operation: Literal["edit", "transcribe"])
             language = form.get("language")
             if language in ("zh", "en"):
                 data["language"] = language
-        name = Path(file.filename or "upload").name
-        file_type = file.content_type or "application/octet-stream"
+        if len(uploads) > 1:
+            try:
+                image = await run_in_threadpool(reference_sheet, [await file.read() for file in uploads])
+            except AttachmentError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            data["prompt"] += (
+                "\n\n參考圖依左到右、上到下編號。未指明主圖時以參考圖 1 為主，其餘依指令參考。"
+                "請輸出一張完整圖片，忽略合圖分隔、底板及編號。"
+            )
+            upload = ("reference-sheet.png", image, "image/png")
+        else:
+            file = uploads[0]
+            upload = (Path(file.filename or "upload").name, await file.read(),
+                      file.content_type or "application/octet-stream")
         field = "image" if operation == "edit" else "file"
         response = await send(request, "POST", ROUTES[operation], data=data,
-                              files={field: (name, await file.read(), file_type)})
+                              files={field: upload})
     return response_json(response)

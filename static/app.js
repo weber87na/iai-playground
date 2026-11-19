@@ -1,9 +1,10 @@
-import { icon, iconButton, imageSource, node, renderMessage } from "./render.js";
+import { icon, iconButton, imageSource, node, renderMessage, setHighlightedCode } from "./render.js";
 import { renderRequestCode } from "./request-code.js";
 
 const IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp", "image/png", "image/jpeg", "image/webp"];
 const DOCUMENT_TYPES = [".pdf", ".txt", ".md", ".markdown", ".csv", "application/pdf", "text/plain", "text/markdown", "text/csv"];
 const ATTACHMENT_TYPES = [...IMAGE_TYPES, ...DOCUMENT_TYPES].join(",");
+const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 const MODES = {
@@ -25,7 +26,7 @@ const MODES = {
   },
   edit: {
     name: "圖片編輯", icon: "edit", title: "用參考圖開始編輯",
-    description: "貼上或上傳一張圖片，描述要修改的地方。", placeholder: "描述你想修改的地方…",
+    description: "貼上或上傳參考圖片，描述要修改的地方。", placeholder: "描述你想修改的地方…",
     accept: IMAGE_TYPES.join(","), fileLabel: "選擇或貼上參考圖",
   },
   transcribe: {
@@ -169,12 +170,44 @@ function setMode(mode, { keepConversation = false, draft } = {}) {
 const currentChat = () => state.chats.find((chat) => chat.id === state.conversation);
 const currentMessages = () => state.mode === "chat" ? (currentChat()?.messages ?? []) : state.taskMessages;
 const authorizedModels = (mode) => MODE_MODELS[mode].filter((id) => state.models.includes(id));
-const lastAttachmentTurn = () => currentChat()?.messages.findLast((message) => message.attachments?.length);
-const activeChatFiles = () => state.files.length ? state.files : chatUploads.get(lastAttachmentTurn()) ?? [];
 const chatHistory = () => (currentChat()?.messages ?? []).map(({ role, text }) => ({ role, content: text }));
+const savedChatFiles = () => (currentChat()?.messages ?? []).some((message) => chatUploads.has(message));
+
+function chatAttachmentPlan(files = state.files) {
+  const history = currentChat()?.messages ?? [];
+  const entries = files.map((file) => ({ file, index: history.length }));
+  let bytes = files.reduce((total, file) => total + file.size, 0);
+  let skipped = 0;
+  for (let index = history.length - 1; index >= 0; index--) {
+    for (const file of chatUploads.get(history[index]) ?? []) {
+      if (entries.length >= MAX_ATTACHMENTS || bytes + file.size > MAX_ATTACHMENT_BYTES) {
+        skipped++;
+        continue;
+      }
+      entries.push({ file, index });
+      bytes += file.size;
+    }
+  }
+  return { entries, previous: entries.length - files.length, skipped };
+}
+
+function rememberChatAttachments(messages, entries) {
+  const kept = new Map();
+  for (const { file, index } of entries) {
+    const batch = kept.get(index) ?? [];
+    batch.push(file);
+    kept.set(index, batch);
+  }
+  for (const [index, message] of messages.entries()) {
+    if (kept.has(index)) chatUploads.set(message, kept.get(index));
+    else chatUploads.delete(message);
+  }
+}
+
 function availableModels() {
   const models = authorizedModels(state.mode);
-  return state.mode === "chat" && activeChatFiles().length ? models.filter((id) => id === VISION_MODEL) : models;
+  return state.mode === "chat" && (state.files.length || savedChatFiles())
+    ? models.filter((id) => id === VISION_MODEL) : models;
 }
 function modelId() {
   const models = availableModels();
@@ -281,13 +314,19 @@ function refreshComposer() {
       refreshComposer();
     });
     remove.disabled = busy;
-    chip.append(icon(isImage(file) ? "image" : "file"), node("span", "", file.name), remove);
+    const name = state.mode === "edit" && state.files.length > 1
+      ? "參考圖 " + (index + 1) + " · " + file.name : file.name;
+    chip.append(icon(isImage(file) ? "image" : "file"), node("span", "", name), remove);
     $("attachment").append(chip);
   }
-  $("attachment-action").hidden = state.mode !== "chat" || (!activeChatFiles().length && !currentChat()?.messages.length);
-  $("attachment-action").textContent = activeChatFiles().length ? "依附件生圖" : "依對話生圖";
+  const attachPlan = state.mode === "chat" ? chatAttachmentPlan() : null;
+  const hasAttachment = Boolean(attachPlan?.entries.length);
+  $("attachment-action").hidden = state.mode !== "chat" || (!hasAttachment && !currentChat()?.messages.length);
+  $("attachment-action").textContent = hasAttachment ? "依附件生圖" : "依對話生圖";
   $("attachment-action").disabled = busy;
-  const hint = composerAttachmentHint();
+  $("clear-attachment-context").hidden = state.mode !== "chat" || !savedChatFiles();
+  $("clear-attachment-context").disabled = busy;
+  const hint = composerAttachmentHint(attachPlan);
   $("attachment-hint").textContent = hint;
   $("attachment-hint").hidden = !hint;
   const hasInput = (state.mode === "transcribe" || $("prompt").value.trim()
@@ -361,17 +400,23 @@ async function enhanceDraft() {
   }
 }
 
-function composerAttachmentHint() {
+function composerAttachmentHint(attachPlan) {
   if (state.mode === "image" && (state.files.length || state.imageContext.length)) {
     return state.imageContext.length
       ? "會帶入前文，先整理生圖提示詞，再呼叫生圖模型。"
       : "先用 Furen-omni 整理附件，再呼叫生圖模型。";
   }
+  if (state.mode === "edit" && state.files.length > 1) {
+    return "多張參考圖會排成編號合圖。可在指令中指定要使用的編號。";
+  }
   if (state.mode === "edit" && state.imageContext.length) return "會帶入對話前文作為圖片編輯背景。";
-  if (state.mode !== "chat" || state.files.length) return "";
-  const turn = lastAttachmentTurn();
-  if (!turn) return "";
-  return chatUploads.has(turn) ? "後續問題會沿用最近送出的附件。" : "如需重新讀取原檔，請再附上檔案。";
+  if (!attachPlan) return "";
+  if (attachPlan.skipped) {
+    return "將帶入 " + attachPlan.previous + " 個舊附件，其餘 " + attachPlan.skipped + " 個超出合計上限。";
+  }
+  if (attachPlan.previous) return "這次會一起帶入 " + attachPlan.previous + " 個先前的附件。";
+  const hadFiles = currentChat()?.messages.some((message) => message.attachments?.length);
+  return !state.files.length && hadFiles ? "如需重新讀取原檔，請再附上檔案。" : "";
 }
 
 function renderModelStatus() {
@@ -392,7 +437,7 @@ function refreshUi() {
   $("hero-icon").setAttribute("href", "#i-" + (state.mode === "chat" ? "orbit" : mode.icon));
   $("prompt").placeholder = mode.placeholder ?? "";
   $("file-input").accept = mode.accept ?? "";
-  $("file-input").multiple = state.mode === "chat" || state.mode === "image";
+  $("file-input").multiple = Boolean(mode.accept) && state.mode !== "transcribe";
   $("mode-pill").replaceChildren(icon(mode.icon), mode.name);
   for (const button of $("mode-list").querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode));
@@ -699,7 +744,7 @@ function taskInput(mode, model, text, settings, files) {
   if (mode === "edit" || mode === "transcribe") {
     const body = new FormData();
     body.set("model", model);
-    body.set("file", files[0]);
+    for (const file of files) body.append("file", file);
     if (mode === "edit") {
       body.set("prompt", text);
       if (settings.size) body.set("size", settings.size);
@@ -715,10 +760,11 @@ function taskInput(mode, model, text, settings, files) {
   return { path: "task/" + mode, body };
 }
 
-function attachedChatBody(chat, attachmentIndex, files) {
+function attachedChatBody(chat, entries, messageOffset = 0) {
   const body = new FormData();
-  body.set("payload", JSON.stringify({ ...chat, attachment_index: attachmentIndex }));
-  for (const file of files) body.append("file", file);
+  const attachment_indices = entries.map(({ index }) => index + messageOffset);
+  body.set("payload", JSON.stringify({ ...chat, attachment_indices }));
+  for (const { file } of entries) body.append("file", file);
   return body;
 }
 
@@ -729,7 +775,7 @@ function imageBriefRequest(text, files, context) {
     { role: "user", content: text },
   ];
   const payload = { model: files.length ? VISION_MODEL : authorizedModels("chat")[0], messages, stream: false };
-  const body = files.length ? attachedChatBody(payload, messages.length - 1, files) : payload;
+  const body = files.length ? attachedChatBody(payload, files.map((file) => ({ file, index: messages.length - 1 }))) : payload;
   return { path: files.length ? "chat/attachments" : "chat", body };
 }
 
@@ -760,8 +806,7 @@ function prepareRequest() {
   const model = modelId();
   const input = mode === "transcribe" ? "" : $("prompt").value.trim();
   const files = [...state.files];
-  const previousAttachment = mode === "chat" ? lastAttachmentTurn() : null;
-  const contextFiles = mode === "chat" && !files.length ? (chatUploads.get(previousAttachment) ?? []) : files;
+  const carried = mode === "chat" ? chatAttachmentPlan(files).entries : [];
   const imageContext = state.imageContext;
   const needsBrief = mode === "image" && (files.length > 0 || imageContext.length > 0);
   if (MODES[mode].fileLabel && !files.length) return null;
@@ -769,7 +814,7 @@ function prepareRequest() {
     needsBrief ? "請根據前文與參考資料設計一張圖。" : "");
   if (!text && mode !== "transcribe") return null;
   if (!state.key) return { needsKey: true };
-  if (((mode === "chat" && contextFiles.length) || (needsBrief && files.length)) && !state.models.includes(VISION_MODEL)) {
+  if ((carried.length || (needsBrief && files.length)) && !state.models.includes(VISION_MODEL)) {
     throw new Error("此金鑰沒有 Furen-omni 的使用權限，無法讀取附件。");
   }
   if (needsBrief && !authorizedModels("chat").length) {
@@ -784,10 +829,8 @@ function prepareRequest() {
     messages.push({ role: "user", content: text });
     if (system) messages.unshift({ role: "system", content: system });
     const body = { ...options, model, messages };
-    if (contextFiles.length) {
-      const index = files.length ? messages.length - 1
-        : currentMessages().indexOf(previousAttachment) + (system ? 1 : 0);
-      packet = { path: "chat/attachments", body: attachedChatBody(body, index, contextFiles) };
+    if (carried.length) {
+      packet = { path: "chat/attachments", body: attachedChatBody(body, carried, system ? 1 : 0) };
     } else {
       packet = { path: "chat", body };
     }
@@ -798,7 +841,7 @@ function prepareRequest() {
     packet = taskInput(mode, model, prompt, settings, files);
   }
   const brief = needsBrief ? imageBriefRequest(text, files, imageContext) : null;
-  return { ...packet, mode, model, brief, input, text, files, previousAttachment };
+  return { ...packet, mode, model, brief, input, text, files, carried };
 }
 
 async function submit(e) {
@@ -820,7 +863,7 @@ async function submit(e) {
     showKey();
     return;
   }
-  const { path, mode, model, brief, input, text, files, previousAttachment } = request;
+  const { path, mode, model, brief, input, text, files, carried } = request;
   let { body } = request;
   const controller = new AbortController();
   state.request = controller;
@@ -837,7 +880,6 @@ async function submit(e) {
   const assistant = { role: "assistant", model, text: "", pending: true };
   if (brief) assistant.waiting = "正在整理生圖提示詞";
   messages.push(user);
-  if (mode === "chat" && files.length) chatUploads.set(user, files);
   messages.push(assistant);
   $("prompt").value = "";
   undoEnhancement = undefined;
@@ -885,7 +927,7 @@ async function submit(e) {
   } finally {
     delete assistant.pending;
     state.request = null;
-    if (mode === "chat" && !removed && files.length && previousAttachment) chatUploads.delete(previousAttachment);
+    if (mode === "chat" && !removed && carried.length) rememberChatAttachments(messages, carried);
     if (mode === "chat" && !removed && !storeHistory()) status("瀏覽器無法保存這筆對話。", true);
     if (removed) refreshUi();
     else {
@@ -923,7 +965,8 @@ function showCodeLanguage(language) {
   codeLanguage = language;
   const code = $("request-code");
   code.parentElement.hidden = !codeRequest;
-  code.textContent = codeRequest ? renderRequestCode(codeRequest, language, window.location.origin) : "";
+  setHighlightedCode(code, codeRequest ? renderRequestCode(codeRequest, language, window.location.origin) : "",
+    language === "curl" ? "powershell" : "python");
   $("copy-code").disabled = !codeRequest;
   $("code-status").textContent = "";
   const hasFiles = codeRequest?.body instanceof FormData || codeRequest?.brief?.body instanceof FormData;
@@ -944,7 +987,7 @@ function matchesFile(file, types) {
 const isImage = (file) => matchesFile(file, IMAGE_TYPES);
 
 function useFilesForImage(files, context = []) {
-  const mode = files.length === 1 && isImage(files[0]) ? "edit" : "image";
+  const mode = files.length && files.every(isImage) ? "edit" : "image";
   setMode(mode, { keepConversation: true, draft: { files, context, text: $("prompt").value } });
   $("prompt").focus();
 }
@@ -973,18 +1016,18 @@ function addFiles(incoming) {
     status(formatError, true);
     return;
   }
-  const single = Boolean(MODES[mode].fileLabel);
+  const single = mode === "transcribe";
   const files = single ? incoming : [...state.files, ...incoming];
-  if (files.length > (single ? 1 : 4)) {
-    status(single ? "這個工作區一次只接受一個檔案。" : "每次最多可附加 4 個檔案。", true);
+  if (files.length > (single ? 1 : MAX_ATTACHMENTS)) {
+    status(single ? "這個工作區一次只接受一個檔案。" : "每次最多可附加 " + MAX_ATTACHMENTS + " 個檔案。", true);
     return;
   }
   if (files.some((file) => !file.size) || files.reduce((size, file) => size + file.size, 0) > MAX_ATTACHMENT_BYTES) {
     status("附件不可為空白，合計上限為 20 MB。", true);
     return;
   }
-  if (mode === "image" && files.length === 1 && isImage(files[0])) {
-    useFilesForImage(files);
+  if (mode === "image" && files.every(isImage)) {
+    useFilesForImage(files, state.imageContext);
     return;
   }
   state.files = files;
@@ -1046,7 +1089,15 @@ $("mobile-key").addEventListener("click", showKey);
 $("open-model").addEventListener("click", showModel);
 $("model-search").addEventListener("input", renderModels);
 $("pick-file").addEventListener("click", () => $("file-input").click());
-$("attachment-action").addEventListener("click", () => useFilesForImage([...activeChatFiles()], chatHistory()));
+$("attachment-action").addEventListener("click", () => {
+  useFilesForImage(chatAttachmentPlan().entries.map(({ file }) => file), chatHistory());
+});
+$("clear-attachment-context").addEventListener("click", () => {
+  for (const message of currentChat()?.messages ?? []) chatUploads.delete(message);
+  recentRequest = undefined;
+  status("已清除這串對話的舊附件，文字前文仍會帶入。");
+  refreshComposer();
+});
 $("file-input").addEventListener("change", () => {
   const files = Array.from($("file-input").files);
   $("file-input").value = "";
@@ -1093,3 +1144,21 @@ $("prompt").addEventListener("keydown", (e) => {
 $("composer").addEventListener("submit", submit);
 setPanel(panelOpen);
 refreshUi();
+
+async function loadBuildRevision() {
+  try {
+    const response = await fetch("/api/version", { cache: "no-store" });
+    if (!response.ok) return;
+    const { commit } = await response.json();
+    if (typeof commit !== "string" || !/^[a-f0-9]{8}$/.test(commit)) return;
+    const label = $("build-revision");
+    label.textContent = commit;
+    label.setAttribute("aria-label", "Git 版本 " + commit);
+    label.title = "Git commit " + commit;
+    label.hidden = false;
+  } catch {
+    // The version is optional for a source tree without Git metadata.
+  }
+}
+
+loadBuildRevision();

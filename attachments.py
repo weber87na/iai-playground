@@ -1,16 +1,16 @@
 import base64
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import closing, contextmanager
 from io import BytesIO
 from pathlib import PurePosixPath
 from threading import Lock
 
 import pypdfium2 as pdfium
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pypdfium2 import raw as pdfium_raw
 
 
-MAX_ATTACHMENTS = 4
+MAX_ATTACHMENTS = 6
 MAX_DOCUMENT_PAGES = 30
 MAX_TEXT_LENGTH = 60_000
 MAX_VISUALS = 6
@@ -50,16 +50,46 @@ def visual_part(image):
     return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}
 
 
-def read_image(data):
+@contextmanager
+def open_image(data):
     try:
         with Image.open(BytesIO(data), formats=IMAGE_FORMATS) as source:
             if source.width * source.height > 32_000_000:
                 raise AttachmentError("圖片解析度過大。請先縮小圖片。")
             with ImageOps.exif_transpose(source) as image:
-                image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-                return visual_part(image)
-    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError) as exc:
+                yield image
+    except (Image.DecompressionBombError, OSError, SyntaxError) as exc:
         raise AttachmentError("無法讀取圖片。請確認檔案格式及內容。") from exc
+
+
+def read_image(data):
+    with open_image(data) as image:
+        image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+        return visual_part(image)
+
+
+def reference_sheet(images):
+    columns = 2 if len(images) <= 4 else 3
+    rows = (len(images) + columns - 1) // columns
+    width = 1536 // columns
+    height = min(width, 1536 // rows)
+    label_height = 38
+    with Image.new("RGB", (width * columns, height * rows), "#f2f2f2") as sheet:
+        draw = ImageDraw.Draw(sheet)
+        font = ImageFont.load_default(size=24)
+        for index, data in enumerate(images):
+            left = index % columns * width
+            top = index // columns * height
+            draw.text((left + 12, top + 6), str(index + 1), fill="#171717", font=font)
+            with open_image(data) as image:
+                image.thumbnail((width - 16, height - label_height - 10), Image.Resampling.LANCZOS)
+                x = left + (width - image.width) // 2
+                y = top + label_height + (height - label_height - image.height) // 2
+                with image.convert("RGBA") as rgba:
+                    sheet.paste(rgba, (x, y), rgba)
+        with BytesIO() as output:
+            sheet.save(output, format="PNG")
+            return output.getvalue()
 
 
 def has_visuals(page):
@@ -112,14 +142,15 @@ def pdf_parts(data, remaining_pages, remaining_visuals) -> Iterator[tuple[str, d
 
 
 def attachment_parts(files):
-    parts = []
+    groups = []
     remaining_pages = MAX_DOCUMENT_PAGES
     remaining_visuals = MAX_VISUALS
     remaining_text = MAX_TEXT_LENGTH
     for filename, content_type, data in files:
         safe_name = PurePosixPath(filename.replace("\\", "/")).name[:180]
         kind = attachment_kind(safe_name, content_type)
-        parts.append(text_part(f"附件：{safe_name}"))
+        parts = [text_part(f"附件：{safe_name}")]
+        groups.append(parts)
         if kind == "image":
             if remaining_visuals <= 0:
                 raise AttachmentError(f"每次最多可讀取 {MAX_VISUALS} 張圖片或含圖 PDF 頁面，請分批送出。")
@@ -148,4 +179,4 @@ def attachment_parts(files):
             if remaining_text < 0:
                 raise AttachmentError("附件文字過長。請分批上傳需要的內容。")
             parts.append(text_part(text))
-    return parts
+    return groups

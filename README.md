@@ -35,7 +35,7 @@ uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-
 | --- | --- |
 | 文字對話 | 多輪訊息、附件問答、串流回應、停止回應、複製文字。參數可設定系統提示詞、Temperature 與 Max tokens。 |
 | 文字生圖 | 預設優先使用 Pic-large。可輸入描述或貼上文件作為素材，設定請求尺寸，並查看實際回傳的圖片尺寸。 |
-| 圖片編輯 | 貼上或上傳一張參考圖，輸入編輯指令，可調圖片尺寸。 |
+| 圖片編輯 | 貼上或上傳一至六張參考圖，輸入編輯指令，可調圖片尺寸。 |
 | 語音轉文字 | 上傳音訊，設定語言或讓模型判斷，取得可複製的文字。 |
 | 文字轉語音 | 輸入要朗讀的文字，Speaker 預設使用 `taiwan_girl`。可選音色與 MP3、WAV，並在頁面播放或下載結果。 |
 | 文字向量化 | 檢視 JSON 與向量維度。 |
@@ -48,12 +48,13 @@ uv export --locked --no-dev --no-emit-project --no-hashes --format requirements-
 - 文字對話、文字生圖與圖片編輯有「優化提示詞」按鈕。它會優先使用金鑰有權限的 Furen-max，其次依序使用 Furen-large、Furen-omni 或其他可用文字模型。優化會改寫草稿，使用者確認後再送出，也可按「還原」。按下優化會使用一次文字模型請求。
 - 生圖在金鑰有權限時預設使用 Pic-large，可切換至 Pic-small。預設請求尺寸為 1024×1024，結果旁會顯示實際像素。可接受的尺寸與其他參數依 iAI 模型而異。
 - 頂部的「程式碼」可複製 PowerShell 7 的 cURL 指令或 Python 3.11+ 的 httpx 範例。範例呼叫目前站點的 Playground API，帶入草稿或最近一次送出的請求。附件請改用本機檔案路徑，金鑰由 `IAI_API_KEY` 環境變數讀取。文件生圖在送出前會列出兩個步驟，送出後則帶入當次實際使用的生圖提示詞。
+- 對話中的程式碼區塊與 cURL／Python 面板由本機提供的 [Highlight.js 11.12.0](https://github.com/highlightjs/cdn-release/tree/11.12.0) 上色。側欄在 NKUST AIHub 下方顯示 Git commit 的前 8 碼。Azure 部署時由 GitHub Actions 將建置 commit 寫入 `build-revision.txt`。
 
 ## 貼上附件
 
 - 在輸入框按 `Ctrl+V` 或 `⌘V`，也可以拖曳到輸入區或按迴紋針。部分瀏覽器不會將檔案管理器複製的 PDF 交給網頁，此時可用拖放或選檔。
-- 對話支援 PNG、JPEG、WebP、PDF，以及 UTF-8 的 TXT、Markdown 與 CSV。檔案合計最多 4 個、20 MB。PDF 合計最多 30 頁，每次最多 6 張圖片或需視覺辨識的 PDF 頁面。文字及掃描頁會分別以文字與頁面影像交給 `Furen-omni`，需要該模型權限。[Omni 圖片輸入格式](https://docs.nvidia.com/nim/vision-language-models/1.7.0/examples/nemotron-3-nano-omni-30b-a3b-reasoning/api.html)
-- 貼上後按「依附件生圖」。單張圖片會帶到「圖片編輯」作為參考圖，並帶入近期前文。文件或多個附件會帶到「文字生圖」，送出時先由 Omni 讀取附件、整理對話與提示詞，再呼叫生圖模型，會使用兩次模型請求。已完成的文字對話也可以按「依對話生圖」。
+- 對話支援 PNG、JPEG、WebP、PDF，以及 UTF-8 的 TXT、Markdown 與 CSV。每次可一起選取、分次貼上或拖放附件，最多 6 個、合計 20 MB。PDF 合計最多 30 頁，每次最多 6 張圖片或需視覺辨識的 PDF 頁面。文字及掃描頁會分別以文字與頁面影像交給 `Furen-omni`。[Omni 圖片輸入格式](https://docs.nvidia.com/nim/vision-language-models/1.7.0/examples/nemotron-3-nano-omni-30b-a3b-reasoning/api.html)
+- 貼上後按「依附件生圖」。純圖片會帶到「圖片編輯」作為參考圖，並帶入近期前文。多張參考圖會在後端排成編號合圖，可在提示詞指定編號。包含文件時會帶到「文字生圖」，先由 Omni 整理提示詞，再呼叫生圖模型，共使用兩次模型請求。
 
 ## 用量與額度
 
@@ -64,7 +65,7 @@ Playground 連線後會用原本的 iAI API Key 向 AIHub 的 `GET /aihub/key/in
 ## 金鑰與資料
 
 - 金鑰只保留在目前頁面的 JavaScript 記憶體，透過 Playground 的 Python 後端送到高科大官方 API。重新整理或中斷連線後需重新貼上。
-- 文字對話與附件名稱保存在目前瀏覽器，可從側欄刪除。原始附件只保留於目前頁面，同一對話會沿用最近一次送出的附件，重新整理後需重新加入。
+- 文字對話與附件名稱保存在目前瀏覽器。原始附件只保留於目前頁面，同一對話優先保留新加入及較近期的附件，合計最多 6 個、20 MB。「清除舊附件」可釋放對話中保留的附件，文字前文仍會帶入。
 - 本機預設僅監聽環回位址。模型請求使用你的 iAI 帳號額度。
 
 API 參考 [nkust-iai](https://github.com/weber87na/nkust-iai)。
