@@ -171,10 +171,16 @@ function pythonCode(request, base) {
       'Path("iai-speech." + formats.get(content_type, "audio")).write_bytes(response.content)');
   } else if (request.mode === "chat") {
     lines.push('if "application/x-ndjson" in response.headers.get("content-type", ""):',
+      '    result = {"text": ""}',
       '    for line in response.iter_lines():', '        if not line.strip():', '            continue',
       '        chunk = json.loads(line)', '        if chunk.get("error"):', '            raise RuntimeError(chunk["error"])',
-      '        print(chunk.get("text", ""), end="")', '    print()',
-      'else:', '    print(response.json()["text"])');
+      '        if chunk.get("reset"):', '            result["text"] = ""',
+      '        result["text"] += chunk.get("text", "")',
+      '        if chunk.get("done"):', '            result.update({key: chunk[key] for key in ("sources", "notice") if key in chunk})',
+      '            break', '    else:', '        raise RuntimeError("回應提前中斷")',
+      'else:', '    result = response.json()', 'print(result["text"])',
+      'for source in result.get("sources", []):', '    print(f"[{source[\'id\']}] {source[\'title\']} {source[\'url\']}")',
+      'if result.get("notice"):', '    print(result["notice"])');
   } else {
     lines.push("print(json.dumps(response.json(), ensure_ascii=False, indent=2))");
   }

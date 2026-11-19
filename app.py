@@ -11,11 +11,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from attachments import MAX_ATTACHMENTS, AttachmentError, attachment_parts, reference_sheet, text_part
+from web_agent import agent_events
 
 
 IAIHUB_URL = "https://www.iai.nkust.edu.tw/aihub"
@@ -219,6 +221,7 @@ class ChatRequest(BaseModel):
     model: ModelID
     messages: list[Message] = Field(min_length=1)
     stream: bool = False
+    web_search: bool = True
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0)
 
@@ -301,7 +304,7 @@ async def chat_events(response):
 
 @app.post("/api/chat")
 async def chat(request: Request, payload: ChatRequest):
-    return await complete_chat(request, payload.model_dump(exclude_none=True))
+    return await user_chat(request, payload.model_dump(exclude_none=True))
 
 
 @app.post("/api/prompt/enhance")
@@ -361,7 +364,47 @@ async def chat_with_attachments(request: Request):
         if isinstance(message["content"], str):
             message["content"] = [text_part(message["content"])]
         message["content"].extend(parts)
-    return await complete_chat(request, body)
+    return await user_chat(request, body)
+
+
+async def researched_chat_events(request, body, key):
+    try:
+        async for chunk in agent_events(body, key, BASE_URL, request.app.state.upstream):
+            yield chunk
+    except APIStatusError as exc:
+        if exc.status_code == 400:
+            raise HTTPException(400, "iAI 拒絕此請求。可檢查模型參數，或關閉連網搜尋後重試。") from exc
+        check_status(exc.response)
+    except APITimeoutError as exc:
+        raise HTTPException(504, "等待 iAI 回應逾時。請確認後再重試。") from exc
+    except APIConnectionError as exc:
+        raise HTTPException(502, "無法連線到 iAI。請檢查網路後再試。") from exc
+    except (APIError, ValueError, RecursionError) as exc:
+        raise HTTPException(502, "iAI 未完成連網對話。可重試或在參數中關閉連網搜尋。") from exc
+
+
+async def user_chat(request, body):
+    if not body.pop("web_search"):
+        return await complete_chat(request, body)
+    key = auth(request)["Authorization"].removeprefix("Bearer ")
+
+    async def stream():
+        try:
+            async for chunk in researched_chat_events(request, body, key):
+                yield event(**chunk)
+        except HTTPException as exc:
+            yield event(error=exc.detail)
+
+    if body["stream"]:
+        return StreamingResponse(stream(), media_type="application/x-ndjson",
+                                 headers={"X-Accel-Buffering": "no"})
+    result = {}
+    async for chunk in researched_chat_events(request, body, key):
+        if "text" in chunk:
+            result["text"] = chunk["text"]
+        if chunk.get("done"):
+            result.update({name: value for name, value in chunk.items() if name != "done"})
+    return result
 
 
 async def complete_chat(request, body):

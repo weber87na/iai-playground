@@ -72,6 +72,7 @@ const PARAMS = {
     system: ["textarea", "系統提示詞", { rows: 3, placeholder: "選填。設定模型的角色或回覆方式。" }],
     temperature: ["number", "Temperature", { min: 0, max: 2, step: 0.1, placeholder: "模型預設" }],
     max_tokens: ["number", "Max tokens", { min: 1, step: 1, placeholder: "模型預設" }],
+    web_search: ["checkbox", "連網搜尋", {}],
     stream: ["checkbox", "使用串流回應", {}],
   },
   image: { size: TEXT("圖片尺寸", "1024x1024", { pattern: "[0-9]{2,5}x[0-9]{2,5}" }) },
@@ -88,7 +89,7 @@ const PARAMS = {
 PARAMS.edit = PARAMS.image;
 
 const defaults = (mode) => ({
-  ...(mode === "chat" ? { stream: true } : {}),
+  ...(mode === "chat" ? { stream: true, web_search: true } : {}),
   ...(["image", "edit"].includes(mode) ? { size: "1024x1024" } : {}),
 });
 const $ = (id) => document.getElementById(id);
@@ -692,6 +693,10 @@ function applyChunk(line, message) {
   if (!line.trim()) return false;
   const event = JSON.parse(line);
   if (event.error) throw new Error(event.error);
+  if (event.reset) message.text = "";
+  if (typeof event.status === "string") message.waiting = event.status;
+  if (Array.isArray(event.sources)) message.sources = event.sources;
+  if (typeof event.notice === "string") message.note = event.notice;
   if (event.usage) message.usage = event.usage;
   if (typeof event.text === "string") message.text += event.text;
   return event.done === true;
@@ -702,6 +707,8 @@ async function readChat(response, message, update) {
     const data = await response.json();
     message.text = data.text;
     message.usage = data.usage;
+    message.sources = data.sources;
+    message.note = data.notice;
     return;
   }
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -774,7 +781,7 @@ function imageBriefRequest(text, files, context) {
     ...context,
     { role: "user", content: text },
   ];
-  const payload = { model: files.length ? VISION_MODEL : authorizedModels("chat")[0], messages, stream: false };
+  const payload = { model: files.length ? VISION_MODEL : authorizedModels("chat")[0], messages, stream: false, web_search: false };
   const body = files.length ? attachedChatBody(payload, files.map((file) => ({ file, index: messages.length - 1 }))) : payload;
   return { path: files.length ? "chat/attachments" : "chat", body };
 }
@@ -879,6 +886,7 @@ async function submit(e) {
   if (files.length) user.attachments = files.map((file) => file.name);
   const assistant = { role: "assistant", model, text: "", pending: true };
   if (brief) assistant.waiting = "正在整理生圖提示詞";
+  else if (mode === "chat" && modeSettings(mode).web_search) assistant.waiting = "等待 agent 回應";
   messages.push(user);
   messages.push(assistant);
   $("prompt").value = "";

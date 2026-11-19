@@ -4,8 +4,13 @@ version = "0.1.0"
 description = "A local BYOK playground for NKUST iAI"
 requires-python = ">=3.11"
 dependencies = [
+    "ddgs>=9,<10",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
+    "langchain>=1.2,<2",
+    "langchain-openai>=1.1,<2",
+    "langsmith>=0.4,<1",
+    "openai>=2,<3",
     "pillow>=12,<13",
     "pypdfium2>=4.30,<6",
     "python-multipart>=0.0.22,<1",

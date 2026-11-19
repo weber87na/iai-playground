@@ -153,6 +153,12 @@ a { color: var(--accent); }
 .message-content :not(pre) > code { background: #ededed; padding: 1px 4px; border-radius: 3px; }
 .message-content img { display: block; max-width: min(100%, 535px); max-height: 70vh; border-radius: 11px; margin-bottom: 9px; }
 .message-content audio { width: min(100%, 440px); }
+.message-sources { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
+.message-sources h2 { margin: 0; font-size: inherit; }
+.message-sources ol { padding-inline-start: 22px; }
+.message-sources li + li { margin-top: 3px; }
+.message-sources a { color: inherit; text-underline-offset: 3px; }
+.message-sources li span { display: block; color: var(--muted); font-size: 12px; }
 .message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
 .message-actions .icon-button { height: 29px; width: 29px; text-decoration: none; }
 .message-actions .icon { width: 16px; height: 16px; }

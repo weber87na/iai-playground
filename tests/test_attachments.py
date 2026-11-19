@@ -27,7 +27,10 @@ class AttachmentTests(unittest.IsolatedAsyncioTestCase):
     async def test_multiple_turns_keep_separate_attachment_context(self):
         async def mock(request):
             self.assertEqual(request.url.path, "/aihub/v1/chat/completions")
-            messages = json.loads(request.content)["messages"]
+            body = json.loads(request.content)
+            self.assertEqual(body["tools"][0]["function"]["name"], "web_search")
+            system, *messages = body["messages"]
+            self.assertEqual(system["role"], "system")
             first = messages[0]["content"]
             latest = messages[2]["content"]
             self.assertEqual(first[0]["text"], "First")
@@ -35,7 +38,7 @@ class AttachmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(messages[1]["content"], "Answer")
             self.assertEqual(latest[0]["text"], "Latest")
             self.assertEqual([part["text"] for part in latest[1:]], ["附件：latest.txt", "current contents"])
-            return httpx.Response(200, json={"choices": [{"message": {"content": "Both received"}}]})
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "Both received"}}]})
 
         payload = {
             "model": "Furen-omni",
@@ -51,12 +54,15 @@ class AttachmentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_previous_single_index_requests_still_work(self):
         async def mock(request):
-            content = json.loads(request.content)["messages"][0]["content"]
+            body = json.loads(request.content)
+            self.assertNotIn("tools", body)
+            self.assertNotIn("web_search", body)
+            content = body["messages"][0]["content"]
             self.assertEqual([part["text"] for part in content[::2]], ["Read files", "A", "B"])
             return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
 
         payload = {"model": "Furen-omni", "messages": [{"role": "user", "content": "Read files"}],
-                   "attachment_index": 0}
+                   "attachment_index": 0, "web_search": False}
         files = [("file", ("a.txt", b"A", "text/plain")), ("file", ("b.txt", b"B", "text/plain"))]
         response = await self.post("/api/chat/attachments", {"payload": json.dumps(payload)}, files, mock)
         self.assertEqual(response.status_code, 200)

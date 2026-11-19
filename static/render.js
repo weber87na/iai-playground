@@ -166,6 +166,29 @@ function download(url, label, filename) {
   return link;
 }
 
+function renderSources(sources) {
+  const list = node("ol");
+  for (const source of sources) {
+    const url = httpsUrl(source?.url, true);
+    if (!url || typeof source.title !== "string" || !Number.isInteger(source.id)) continue;
+    const item = node("li");
+    item.value = source.id;
+    const link = node("a", "", source.title);
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    item.append(link);
+    const date = typeof source.date === "string" ? source.date.slice(0, 10) : "";
+    const context = [source.site, date].filter((value) => typeof value === "string" && value);
+    if (context.length) item.append(node("span", "", context.join(" · ")));
+    list.append(item);
+  }
+  if (!list.childElementCount) return null;
+  const section = node("section", "message-sources");
+  section.append(node("h2", "", "搜尋來源"), list);
+  return section;
+}
+
 export function renderMessage(message) {
   const article = node("article", "message " + message.role);
   if (message.role === "user") {
@@ -193,7 +216,9 @@ export function renderMessage(message) {
     content.replaceChildren();
     actions.replaceChildren();
     if (message.pending && !message.text) {
-      content.append(node("div", "pending", message.waiting ?? "等待模型回應"));
+      const pending = node("div", "pending", message.waiting ?? "等待模型回應");
+      pending.setAttribute("role", "status");
+      content.append(pending);
       return;
     }
     if (message.image) {
@@ -224,6 +249,10 @@ export function renderMessage(message) {
       content.append(pre);
     } else {
       content.append(markdown(message.text, !message.pending));
+      if (Array.isArray(message.sources)) {
+        const sources = renderSources(message.sources);
+        if (sources) content.append(sources);
+      }
     }
     if (!message.pending && message.text) {
       const copy = iconButton("copy", "複製回應", async () => {
